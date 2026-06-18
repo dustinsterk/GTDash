@@ -1,1 +1,1 @@
-Placeholder file for file GARW Uploader requirments check.  Dash code on the GTDash_main.qml file.
+Placeholder file for file GARW Uploader requirments check.  Dash code in the GTDash_main.qml file.
