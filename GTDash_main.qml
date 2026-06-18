@@ -263,6 +263,8 @@ Item {
     // below; true swaps them. Each value keeps its own formatting (fixed-width
     // rpm, speed unit, engine-off dashes); only the slot it occupies changes.
     property bool placementSwap: false
+    // Hide the 1k tach scale numbers when true (default false = shown).
+    property bool hideTachNums: false
     property int  speedShown: (speedunits === 0) ? speed : Math.round(speed / 1.609)
     property string gearLabel: {
         if ((root.inputs & 0x4000000) !== 0) return "R";   // reverse bit forces "R"
@@ -330,6 +332,7 @@ Item {
     onOilPressUnitsChanged: bg.requestPaint()
     onTempunitsChanged:     bg.requestPaint()
     onAfrSourceChanged:     bg.requestPaint()
+    onHideTachNumsChanged:  bg.requestPaint()
 
     // ---- STATIC layer ------------------------------------------------------
     Canvas {
@@ -379,6 +382,7 @@ Item {
 
         // 1k scale labels — drawn on TOP of the centre disc (see onPaint order)
         function drawTachNumbers(ctx) {
+            if (root.hideTachNums) return;
             ctx.font = "bold 23px " + root.ff; ctx.textAlign = "center"; ctx.textBaseline = "middle";
             var rLbl = gaugeR - 58;
             for (var n = 0; n * 1000 <= root.rpmmax; n++) {
@@ -849,6 +853,7 @@ Item {
         root.nightlight   = pI(rline(24),  root.nightlight);
         root.afrSource    = pI(rline(25),  root.afrSource);
         root.placementSwap= pI(rline(26),  root.placementSwap ? 1 : 0) !== 0;
+        root.hideTachNums = pI(rline(27),  root.hideTachNums ? 1 : 0) !== 0;
         return found;
     }
     function saveConfig() {
@@ -860,7 +865,7 @@ Item {
                         root.oilPressHigh.toFixed(1), root.oilPressLow.toFixed(1), root.oilPressUnits,
                         root.batteryHigh.toFixed(1), root.batteryLow.toFixed(1),
                         root.afrHigh.toFixed(2), root.afrLow.toFixed(2), root.nightlight,
-                        root.afrSource, (root.placementSwap ? 1 : 0)];
+                        root.afrSource, (root.placementSwap ? 1 : 0), (root.hideTachNums ? 1 : 0)];
             // Write the whole file in a SINGLE writetoopenfile() call (verified
             // to round-trip with the per-line reader above).
             var out = "";
@@ -929,10 +934,11 @@ Item {
         { k: "asrc",   label: "AFR SOURCE" },
         { k: "night",  label: "NIGHTLIGHT" },
         { k: "swap",   label: "RPM/SPEED SWAP" },
+        { k: "htn",    label: "HIDE TACH NUMS" },
         { k: "exit",   label: "EXIT" }
     ]
     // toggles + exit aren't hold-to-ramp; everything else is.
-    readonly property var noRamp: ["speed", "dist", "cun", "otun", "opun", "asrc", "swap", "exit"]
+    readonly property var noRamp: ["speed", "dist", "cun", "otun", "opun", "asrc", "swap", "htn", "exit"]
     function isRampable(k) { return noRamp.indexOf(k) === -1; }
 
     function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
@@ -968,6 +974,7 @@ Item {
         case "asrc":   root.afrSource    = ((root.afrSource + dir) % 3 + 3) % 3; break;
         case "night":  root.nightlight   = clamp(root.nightlight + dir * 5, 0, 100); break;
         case "swap":   root.placementSwap = !root.placementSwap; break;
+        case "htn":    root.hideTachNums  = !root.hideTachNums;  break;
         case "exit":   if (dir > 0) { saveConfig(); closeMenu(); return; } break;
         }
         root.settingsRev += 1;          // triggers the ListView value cells to re-read
@@ -1003,6 +1010,7 @@ Item {
         case "asrc":   return root.afrSource === 0 ? "AFR" : root.afrSource === 1 ? "LAMBDA" : "OFF";
         case "night":  return root.nightlight === 0 ? "OFF" : String(root.nightlight);
         case "swap":   return root.placementSwap ? "TRUE" : "FALSE";
+        case "htn":    return root.hideTachNums  ? "TRUE" : "FALSE";
         case "exit":   return "SAVE";
         }
         return "";
