@@ -259,6 +259,10 @@ Item {
     // above 0). Used to show a centred placeholder instead of a lone right-aligned
     // "0", which looks lost in the fixed-width box until the car starts.
     property bool engineOff: !selfTest && Math.round(rpmShown) < 1
+    // RPM / Speed placement: false (default) keeps RPM big on top with speed
+    // below; true swaps them. Each value keeps its own formatting (fixed-width
+    // rpm, speed unit, engine-off dashes); only the slot it occupies changes.
+    property bool placementSwap: false
     property int  speedShown: (speedunits === 0) ? speed : Math.round(speed / 1.609)
     property string gearLabel: {
         if ((root.inputs & 0x4000000) !== 0) return "R";   // reverse bit forces "R"
@@ -492,37 +496,42 @@ Item {
         Text {
             id: rpmMetric; visible: false
             text: String(root.rpmmax)
-            font.family: root.menuFont; font.bold: true; font.pixelSize: 70
+            font.family: root.menuFont; font.bold: true; font.pixelSize: root.placementSwap ? 52 : 70
         }
         Text {   // rpm number — fixed-width box, right-aligned so digits don't reflow.
                  // Engine off: dimmed four-dash placeholder filling the box.
             id: rpmNum
-            text: root.engineOff ? "\u2013\u2013\u2013\u2013" : String(Math.round(root.rpmShown))
+            text: root.engineOff ? "\u2013\u2013\u2013\u2013" : String(Math.round(root.rpmShown / 10) * 10)
             color: root.engineOff ? "#566581"
                  : (root.overrev ? (root.blinkOn ? "#ff4040" : "#ff8a8a") : "#ffffff")
-            font.family: root.menuFont; font.bold: true; font.pixelSize: 70
+            font.family: root.menuFont; font.bold: true; font.pixelSize: root.placementSwap ? 52 : 70
             width: rpmMetric.implicitWidth
             horizontalAlignment: Text.AlignRight
-            x: 384 - width / 2; y: 218 - 65
+            x: (root.placementSwap ? 382 : 384) - width / 2
+            y: root.placementSwap ? (290 - 49) : (218 - 65)
         }
         Text {   // "RPM" tag, just right of the number (dimmed to match the off state)
             text: "RPM"
             color: root.engineOff ? "#566581" : (root.overrev ? "#ff5555" : root.accent)
             font.family: root.menuFont; font.bold: true; font.pixelSize: 18
-            x: rpmNum.x + rpmNum.width + 8; y: 214 - 17
+            x: rpmNum.x + rpmNum.width + 8
+            y: root.placementSwap ? 268 : (214 - 17)
         }
         Text {   // speed — real value when running (incl. "0" when stopped at a
                  // light); dimmed dash placeholder only when the engine is off
+            id: spdNum
             text: root.engineOff ? "\u2013\u2013\u2013" : String(root.speedShown)
             color: root.engineOff ? "#566581" : "#ffffff"
-            font.family: root.menuFont; font.bold: true; font.pixelSize: 52
-            x: 382 - width / 2; y: 290 - 49
+            font.family: root.menuFont; font.bold: true; font.pixelSize: root.placementSwap ? 70 : 52
+            x: (root.placementSwap ? 384 : 382) - width / 2
+            y: root.placementSwap ? (218 - 65) : (290 - 49)
         }
         Text {   // speed unit (dimmed to match the off state)
             text: root.speedunits === 0 ? "km/h" : "mph"
             color: root.engineOff ? "#566581" : "#9fb2d0"
             font.family: root.menuFont; font.bold: true; font.pixelSize: 18
-            x: 456; y: 286 - 17
+            x: root.placementSwap ? (spdNum.x + spdNum.width + 8) : 456
+            y: root.placementSwap ? 197 : (286 - 17)
         }
 
         // shift lights below speed: three red rings, completely hidden until
@@ -543,7 +552,7 @@ Item {
                     height: 22
                     width: implicitHeight > 0 ? 22 * implicitWidth / implicitHeight : 32
                     fillMode: Image.PreserveAspectFit
-                    smooth: true; mipmap: true; antialiasing: true
+                    smooth: true; antialiasing: true
                     opacity: {
                         var lit = ((root.inputs & modelData.bit) !== 0)
                                   || (root.rpmShown >= root.rpmredline * modelData.rpmFrac);
@@ -628,7 +637,7 @@ Item {
                 source: "assets/service.png"
                 height: 26
                 width: implicitHeight > 0 ? 26 * implicitWidth / implicitHeight : 22
-                fillMode: Image.PreserveAspectFit; smooth: true; mipmap: true; antialiasing: true
+                fillMode: Image.PreserveAspectFit; smooth: true; antialiasing: true
                 x: vText.x + vText.width + 16
                 y: 388 - height / 2
             }
@@ -672,7 +681,7 @@ Item {
         source: root.fuelLevel < root.fuelLow ? "assets/fuel_level_warning.png"
                                               : "assets/fuel.png"
         x: 620; y: 366 + 22 - height/2; height: 26
-        fillMode: Image.PreserveAspectFit; smooth: true; mipmap: true
+        fillMode: Image.PreserveAspectFit; smooth: true
         opacity: root.fuelLevel < root.fuelLow ? 1.0 : 0.85
     }
 
@@ -707,7 +716,7 @@ Item {
                     // gives every icon the same 12px gap.
                     width: Math.min(40, implicitHeight > 0 ? 26 * implicitWidth / implicitHeight : 36)
                     fillMode: Image.PreserveAspectFit
-                    smooth: true; mipmap: true; antialiasing: true
+                    smooth: true; antialiasing: true
                     // lit when its bit is set; the TC symbol also lights when TC
                     // is switched OFF, so the OFF tag sits on a lit icon
                     opacity: (root.selfTest || (root.inputs & modelData.bit) || (ttCell.isTc && ttCell.tcOff)) ? 1.0 : 0.25
@@ -758,13 +767,13 @@ Item {
     Image {   // blinking left indicator
         source: "assets/left_indicator.png"
         x: 36; y: 18; height: 50; fillMode: Image.PreserveAspectFit
-        smooth: true; mipmap: true
+        smooth: true
         visible: root.tLeft && root.blinkOn
     }
     Image {   // blinking right indicator
         source: "assets/right_indicator.png"
         x: 718; y: 18; height: 50; fillMode: Image.PreserveAspectFit
-        smooth: true; mipmap: true
+        smooth: true
         visible: root.tRight && root.blinkOn
     }
 
@@ -835,6 +844,7 @@ Item {
         root.afrLow       = pF(rline(23),  root.afrLow);
         root.nightlight   = pI(rline(24),  root.nightlight);
         root.afrSource    = pI(rline(25),  root.afrSource);
+        root.placementSwap= pI(rline(26),  root.placementSwap ? 1 : 0) !== 0;
         return found;
     }
     function saveConfig() {
@@ -846,7 +856,7 @@ Item {
                         root.oilPressHigh.toFixed(1), root.oilPressLow.toFixed(1), root.oilPressUnits,
                         root.batteryHigh.toFixed(1), root.batteryLow.toFixed(1),
                         root.afrHigh.toFixed(2), root.afrLow.toFixed(2), root.nightlight,
-                        root.afrSource];
+                        root.afrSource, (root.placementSwap ? 1 : 0)];
             // Write the whole file in a SINGLE writetoopenfile() call (verified
             // to round-trip with the per-line reader above).
             var out = "";
@@ -914,10 +924,11 @@ Item {
         { k: "alo",    label: "AFR LOW" },
         { k: "asrc",   label: "AFR SOURCE" },
         { k: "night",  label: "NIGHTLIGHT" },
+        { k: "swap",   label: "RPM/SPEED SWAP" },
         { k: "exit",   label: "EXIT" }
     ]
     // toggles + exit aren't hold-to-ramp; everything else is.
-    readonly property var noRamp: ["speed", "dist", "cun", "otun", "opun", "asrc", "exit"]
+    readonly property var noRamp: ["speed", "dist", "cun", "otun", "opun", "asrc", "swap", "exit"]
     function isRampable(k) { return noRamp.indexOf(k) === -1; }
 
     function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
@@ -952,6 +963,7 @@ Item {
         case "alo":    root.afrLow       = clamp(root.afrLow  + dir * (root.afrSource === 0 ? 0.1/14.7 : 0.01), 0.5, 1.5); break;
         case "asrc":   root.afrSource    = ((root.afrSource + dir) % 3 + 3) % 3; break;
         case "night":  root.nightlight   = clamp(root.nightlight + dir * 5, 0, 100); break;
+        case "swap":   root.placementSwap = !root.placementSwap; break;
         case "exit":   if (dir > 0) { saveConfig(); closeMenu(); return; } break;
         }
         root.settingsRev += 1;          // triggers the ListView value cells to re-read
@@ -986,6 +998,7 @@ Item {
         case "alo":    return root.afrSource === 0 ? (root.afrLow  * 14.7).toFixed(1) : root.afrLow.toFixed(2)  + "\u03BB";
         case "asrc":   return root.afrSource === 0 ? "AFR" : root.afrSource === 1 ? "LAMBDA" : "OFF";
         case "night":  return root.nightlight === 0 ? "OFF" : String(root.nightlight);
+        case "swap":   return root.placementSwap ? "TRUE" : "FALSE";
         case "exit":   return "SAVE";
         }
         return "";
@@ -1021,8 +1034,8 @@ Item {
         interval: 50; running: true; repeat: true
         onTriggered: root.evalEdges()
     }
-    Timer {   // hold-to-ramp for numeric rows
-        interval: 90; running: true; repeat: true
+    Timer {   // hold-to-ramp for numeric rows (only runs while the menu is open)
+        interval: 90; running: root.menuOpen; repeat: true
         onTriggered: {
             if (root.menuOpen && root.isRampable(root.items[root.sel].k)) {
                 // upArmed/downArmed gate the ramp until the button is released
