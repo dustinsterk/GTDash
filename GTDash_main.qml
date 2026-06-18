@@ -523,7 +523,7 @@ Item {
             color: root.engineOff ? "#566581" : (root.overrev ? "#ff5555" : root.accent)
             font.family: root.menuFont; font.bold: true; font.pixelSize: 18
             x: rpmNum.x + rpmNum.width + 8
-            y: root.placementSwap ? 268 : (214 - 17)
+            y: root.placementSwap ? 258 : (214 - 17)
         }
         Text {   // speed — real value when running (incl. "0" when stopped at a
                  // light); dimmed dash placeholder only when the engine is off
@@ -539,7 +539,7 @@ Item {
             color: root.engineOff ? "#566581" : "#9fb2d0"
             font.family: root.menuFont; font.bold: true; font.pixelSize: 18
             x: root.placementSwap ? (spdNum.x + spdNum.width + 8) : 456
-            y: root.placementSwap ? 197 : (286 - 17)
+            y: root.placementSwap ? 197 : (276 - 17)
         }
 
         // shift lights below speed: three red rings, completely hidden until
