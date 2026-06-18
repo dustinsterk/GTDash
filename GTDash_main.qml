@@ -351,8 +351,9 @@ Item {
             ctx.clearRect(0, 0, width, height);
             ctx.fillStyle = "#05070d"; ctx.fillRect(0, 0, width, height);   // backdrop
             ctx.fillStyle = "#0a1326"; ctx.fillRect(0, 366, width, 44);     // bottom bar
-            drawTachStatic(ctx);     // bezel + baseline ticks + number labels
+            drawTachStatic(ctx);     // bezel + baseline ticks
             drawCentreStatic(ctx);   // inner disc + gear pill + divider
+            drawTachNumbers(ctx);    // 1k scale labels (on top of the disc)
             if (root.showOilTemp)  box(ctx, 12,  96, 176, 104);   // side boxes (hidden when
             if (root.showOilPress) box(ctx, 12, 214, 176, 104);   // their unit is set to OFF)
             if (root.showAfr)      box(ctx, 612, 96, 176, 104);
@@ -374,12 +375,15 @@ Item {
                 ctx.lineTo(cx + ro * Math.cos(a), cy + ro * Math.sin(a));
                 ctx.stroke();
             }
-            // number labels 0..9 (red in the shift zone)
-            ctx.font = "bold 30px " + root.ff; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-            var rLbl = bandIn - 22;
-            for (var n = 0; n <= 9; n++) {
+        }
+
+        // 1k scale labels — drawn on TOP of the centre disc (see onPaint order)
+        function drawTachNumbers(ctx) {
+            ctx.font = "bold 23px " + root.ff; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+            var rLbl = gaugeR - 58;
+            for (var n = 0; n * 1000 <= root.rpmmax; n++) {
                 var an = ang(n * 1000);
-                ctx.fillStyle = (n * 1000 >= root.rpmredline) ? "#ff5555" : "#ffffff";
+                ctx.fillStyle = (n * 1000 >= root.rpmredline) ? "#ff6a6a" : "#e9eefb";
                 ctx.fillText(String(n), cx + rLbl * Math.cos(an), cy + rLbl * Math.sin(an));
             }
         }
