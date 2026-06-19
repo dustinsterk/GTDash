@@ -111,6 +111,11 @@ Item {
     property int  inputs:    d ? d.inputsdata       : 0
     property real oiltemp:   d ? d.oiltempdata      : 0      // °C (native)
     property real oilpress:  d ? (d.oilpressuredata * 14.5038) : 0  // native BAR -> PSI (canonical)
+    // Smoothed oil-pressure display: sweeps up from 0 as the engine builds
+    // pressure on start (and eases down on shut-off) instead of snapping.
+    property real oilPressShown: 0
+    Behavior on oilPressShown { SmoothedAnimation { velocity: 60 } }   // ~PSI/sec
+    onOilpressChanged: oilPressShown = oilpress
     property real afr:       d ? (d.o2data * 14.7)  : 0      // native lambda -> AFR (canonical, x14.7)
     property real battery:   d ? d.batteryvoltagedata : 0    // volts
 
@@ -171,10 +176,11 @@ Item {
     // rpm-needle smoothing. The spring chases rpmDisplay toward the live rpm.
     // RPM DAMPING 1..10 maps linearly to spring stiffness: 1 = snappiest (stiff,
     // tracks a throttle blip tightly) ... 10 = smoothest (calm, gliding needle).
-    // Every step changes the feel (an earlier formula clamped 1..3 to the same
-    // max). springDamp (below) is paired to the stiffness to stay near-
-    // critically-damped: fast settle, ~no overshoot.
-    readonly property real springVal: 60.0 - (Math.max(1, Math.min(10, rpmDamp)) - 1) * ((60.0 - 12.0) / 9.0)
+    // Geometric scale: each step multiplies stiffness by a constant ratio, from
+    // 55 (1 = near-instant snap, ~60ms) down to 0.8 (10 = lazy gliding needle,
+    // ~1.6s). A geometric (vs linear) spread makes the *perceived* change even
+    // across the 1..10 range instead of bunching it at the stiff end.
+    readonly property real springVal: 55.0 * Math.pow(0.8 / 55.0, (Math.max(1, Math.min(10, rpmDamp)) - 1) / 9.0)
 
     // ---- bundled UI font ---------------------------------------------------
     // The IC7's Qt does not alias the generic "sans-serif" to a sans font (it
@@ -205,7 +211,7 @@ Item {
     // ---- spring-damped rpm + animation clock ------------------------------
     property real rpmDisplay: 0
     // damping 0.55 settles fast with little overshoot (was 0.30 = bouncy/slow).
-    readonly property real springDamp: 0.55 + springVal * 0.014   // near-critical
+    readonly property real springDamp: 0.30 + springVal * 0.025   // paired to the stiffness: clean settle, ~no bounce across the range
     Behavior on rpmDisplay { SpringAnimation { spring: root.springVal; damping: root.springDamp; epsilon: 1 } }
     onRpmChanged: rpmDisplay = rpm
 
@@ -216,14 +222,19 @@ Item {
     //  what the tach, rpm number and shift lights read.
     property bool  selfTest: true
     property real  sweepRpm: 0
-    readonly property real rpmShown: selfTest ? sweepRpm : rpmDisplay
-    // 0..1 sweep progress; drives every bar in sync during the power-on self-test
+    property real  settle:   0   // 0 = showing the swept value, 1 = eased onto live
+    // during the test the tach sweeps up, then eases from the peak onto the live
+    // value so nothing snaps when the test hands over to real data
+    readonly property real rpmShown: selfTest ? (sweepRpm * (1 - settle) + rpmDisplay * settle) : rpmDisplay
+    // 0..1 sweep progress; drives every bar during the power-on self-test
     readonly property real sweepFrac: Math.max(0, Math.min(1, sweepRpm / Math.max(1, rpmmax)))
     SequentialAnimation {
         id: bootSweep; running: false
+        // sweep the tach + every bar up to full
         NumberAnimation { target: root; property: "sweepRpm"; from: 0; to: root.rpmmax; duration: 850; easing.type: Easing.OutCubic }
-        NumberAnimation { target: root; property: "sweepRpm"; to: 0;             duration: 650; easing.type: Easing.InCubic }
-        PauseAnimation  { duration: 140 }
+        PauseAnimation  { duration: 200 }
+        // then ease everything from full down onto the real live values (no snap)
+        NumberAnimation { target: root; property: "settle";   from: 0; to: 1;            duration: 700; easing.type: Easing.InOutCubic }
         ScriptAction    { script: root.selfTest = false }
     }
 
@@ -240,7 +251,7 @@ Item {
     onFuelChanged: fuelDisplay = fuel
     readonly property real fuelLevel: (fuelDamp <= 0) ? fuel : fuelDisplay
     // fuel bar fill fraction — follows the self-test sweep, else the live level
-    readonly property real fuelBarFrac: selfTest ? sweepFrac : fuelLevel / 100
+    readonly property real fuelBarFrac: selfTest ? (sweepFrac * (1 - settle) + (fuelLevel / 100) * settle) : fuelLevel / 100
 
     // Rev-lag debug overlay: set true to compare raw vs smoothed rpm when
     // tuning a dash's needle response. Off for normal use.
@@ -294,21 +305,21 @@ Item {
     }
     function gaugeWarn(k) {
         if (k === "oiltemp")  return oiltemp  >= oilTempHigh;
-        if (k === "oilpress") return oilpress <= oilPressLow || oilpress >= oilPressHigh;
+        if (k === "oilpress") return (!engineOff && oilPressShown <= oilPressLow) || oilPressShown >= oilPressHigh;
         if (k === "afr")      { var l = afr / 14.7; return l < afrLow || l > afrHigh; }
         return watertemp >= coolantHigh;   // coolant
     }
     function gaugeFrac(k) {
         var f;
         if (k === "oiltemp")       f = (oiltemp  - oilTempLow)  / Math.max(1, oilTempHigh  - oilTempLow);
-        else if (k === "oilpress") f = (oilpress - oilPressLow) / Math.max(1, oilPressHigh - oilPressLow);
+        else if (k === "oilpress") f = (oilPressShown - oilPressLow) / Math.max(1, oilPressHigh - oilPressLow);
         else if (k === "afr")    { var l = afr / 14.7; f = (l - afrLow) / Math.max(0.001, afrHigh - afrLow); }
         else                       f = (watertemp - coolantLow) / Math.max(1, coolantHigh - coolantLow);
         return Math.max(0, Math.min(1, f));
     }
     function gaugeVal(k) {
         if (k === "oiltemp")  return String(Math.round(oilTempUnits === 0 ? oiltemp : oiltemp * 9/5 + 32));
-        if (k === "oilpress") return oilPressUnits === 0 ? String(Math.round(oilpress)) : (oilpress / 14.5038).toFixed(1);
+        if (k === "oilpress") return oilPressUnits === 0 ? String(Math.round(oilPressShown)) : (oilPressShown / 14.5038).toFixed(1);
         if (k === "afr")      return afrSource === 0 ? afrShown.toFixed(1) : afrShown.toFixed(2);
         return String(Math.round(tempunits === 0 ? watertemp : watertemp * 9/5 + 32));   // coolant
     }
@@ -594,9 +605,9 @@ Item {
                 visible: root.selfTest || root.gaugeShown(modelData.kind)
                 property bool   warn:    root.gaugeWarn(modelData.kind)
                 // engine-damage criticals flash (low oil pressure / coolant overtemp)
-                property bool   critical:(modelData.kind === "oilpress" && root.oilpress  <= root.oilPressLow)
+                property bool   critical:(modelData.kind === "oilpress" && !root.engineOff && root.oilPressShown <= root.oilPressLow)
                                       || (modelData.kind === "coolant"  && root.watertemp >= root.coolantHigh)
-                property real   frac:    root.selfTest ? root.sweepFrac : root.gaugeFrac(modelData.kind)
+                property real   frac:    root.selfTest ? (root.sweepFrac * (1 - root.settle) + root.gaugeFrac(modelData.kind) * root.settle) : root.gaugeFrac(modelData.kind)
                 property string valStr:  root.gaugeVal(modelData.kind)
                 property string unitStr: root.gaugeUnit(modelData.kind)
 
@@ -634,9 +645,9 @@ Item {
             id: bat
             property bool  warn: root.battery < root.batteryLow || root.battery > root.batteryHigh
             property color col:  (!root.selfTest && warn) ? "#ff5050" : root.accent
-            property real  lvl:  root.selfTest ? root.sweepFrac
-                                 : Math.max(0, Math.min(1, (root.battery - root.batteryLow)
+            readonly property real realLvl: Math.max(0, Math.min(1, (root.battery - root.batteryLow)
                                  / Math.max(0.1, root.batteryHigh - root.batteryLow)))
+            property real  lvl:  root.selfTest ? (root.sweepFrac * (1 - root.settle) + realLvl * root.settle) : realLvl
             Rectangle { x: 18; y: 379; width: 30; height: 18; color: "transparent"
                         border.color: bat.col; border.width: 2 }           // body
             Rectangle { x: 48; y: 384; width: 3;  height: 8;  color: bat.col }   // nub
@@ -892,6 +903,7 @@ Item {
         if (!loadConfig())
             saveConfig();
         fuelDisplay = fuel;   // start the damped bar at the live level (no boot sweep)
+        oilPressShown = oilpress;   // start oil pressure at live (boot self-test owns the boot sweep)
         bootSweep.start();    // power-on self-test sweep
     }
 
