@@ -109,6 +109,63 @@ Item {
     property real odometer:  d ? (d.odometer0data    / 10) : 0   // tenths of km
     property int  tripmeter: d ? (d.tripmileage0data / 10) : 0   // tenths of km
     property int  inputs:    d ? d.inputsdata       : 0
+    // ECU ASCII status text over CAN (e.g. "TPMS Fault", "Slip %"). Host may send
+    // it as a string or a NUL-terminated byte array; decode both. The raw read is
+    // a binding so it stays reactive; absent in the sim -> "" (line stays hidden).
+    // Read as a QML string so the host QByteArray/QString is coerced cleanly (the
+    // reference dash does the same). Then sanitise: keep printable ASCII up to the
+    // first NUL and trim. This drops the stray control/padding bytes that render as
+    // boxes ("[]") while a multi-frame ECU message is still streaming in.
+    // ECU ASCII status text (CAN canasciidata), shown raw. Read as a QML string
+    // so the host value is coerced cleanly, then drop control / non-printable
+    // bytes (which would render as boxes) and trim the ends — without truncating
+    // at NULs. No buffering, assembly or rate-limiting: the line always reflects
+    // exactly the current value the ECU is sending, and clears when it clears.
+    property string canAsciiRaw: d ? d.canasciidata : ""
+    readonly property string canAsciiStr: {
+        var src = root.canAsciiRaw;
+        if (!src) return "";
+        var out = "";
+        for (var i = 0; i < src.length; i++) {
+            var c = src.charCodeAt(i);
+            if (c >= 32 && c < 127) out += src.charAt(i);   // keep printable ASCII; drop NUL/control/high bytes
+        }
+        return root.canAsciiCollapse(out.trim());
+    }
+    // Collapse a host buffer that does not self-clear and piles a message up.
+    // (A) char-level: handles a *misaligned* window of a repeated unit such as
+    //     "LT FAULT FAU" — find the smallest whole-string period; if the text is
+    //     >= 2 periods, take one period rotated to a word boundary -> "FAULT".
+    // (B) word-level: drop consecutive duplicate words, then collapse an exact
+    //     repeated phrase. Distinct messages ("TPMS FAULT", "Boost Control Fault
+    //     Detected") have no short period and are left untouched.
+    function canAsciiCollapse(out) {
+        if (!out.length) return "";
+        var w = out.split(/\s+/);
+        // The host window can open or close mid-word, so the first token may be a
+        // SUFFIX of the real word ("AULT FAULT", "T FAULT", "ULT FAULT") and the
+        // last token a PREFIX of it ("FAULT FAU", "LT FAULT FAU"). Drop those
+        // partials. (substring, not endsWith/startsWith, for Qt 5.12.8 V4 safety.)
+        if (w.length >= 2) {
+            var f = w[0], s = w[1];
+            if (f.length < s.length && s.substring(s.length - f.length) === f) w.shift();
+        }
+        if (w.length >= 2) {
+            var e = w[w.length - 1], q = w[w.length - 2];
+            if (e.length < q.length && q.substring(0, e.length) === e) w.pop();
+        }
+        var c = [];                                                // collapse consecutive duplicate words
+        for (var a = 0; a < w.length; a++)
+            if (a === 0 || w[a] !== w[a - 1]) c.push(w[a]);
+        var n = c.length;                                          // collapse an exact repeated phrase
+        for (var pp = 1; pp <= (n >> 1); pp++) {
+            if (n % pp !== 0) continue;
+            var rep = true;
+            for (var j = pp; j < n; j++) { if (c[j] !== c[j - pp]) { rep = false; break; } }
+            if (rep) return c.slice(0, pp).join(" ");
+        }
+        return c.join(" ");
+    }
     property real oiltemp:   d ? d.oiltempdata      : 0      // °C (native)
     property real oilpress:  d ? (d.oilpressuredata * 14.5038) : 0  // native BAR -> PSI (canonical)
     // Smoothed oil-pressure display: sweeps up from 0 as the engine builds
@@ -773,6 +830,77 @@ Item {
         }
     }
 
+    // ECU ASCII status line (CAN canasciidata), lower-left below the telltales.
+    // This is a cycling status line: the ECU rotates DISTINCT messages through it
+    // (FAULT, TPMS, LTC, SLIP%, ...) and also flashes misaligned fragments
+    // ("AULT FAULT"), lone partials ("LT", single letters) and empty pulses.
+    // Pipeline: (1) canAsciiStr collapses each value's own repetition/partials;
+    // (2) a 120 ms settle accepts a value only after it holds steady that long, so
+    // single-frame blips never reach the screen while a message the ECU rests on
+    // shows. Each settled message REPLACES the previous (no accumulation). An empty
+    // value arms a 3 s timer; 3 s of continuous quiet blanks the line.
+    // (3) Nuisance pattern: "TPMS" followed by a (repeating) "FAULT" is ONE occurrence
+    // -- the FAULT keeps re-showing until the next TPMS. Occurrences are tallied
+    // cumulatively (repeats or other text in between do NOT reset the count). After
+    // canAsciiSuppressAfter occurrences this power cycle, the whole TPMS fault latches
+    // off: the "TPMS" and the FAULTs that belong to it (the repeating "FAULT FAULT")
+    // stop showing for the session. A FAULT that is NOT in a TPMS-fault context (no
+    // preceding TPMS, or after other text such as "OIL FAULT" / "LTC") still shows.
+    // Latch lives in memory only -> a power cycle restores it.
+    Text {
+        id: canAsciiText
+        property string pending: root.canAsciiStr    // latest collapsed value
+        property int canAsciiPairs: 0                 // TPMS->FAULT occurrences this power cycle (cumulative)
+        property bool canAsciiAwaitFault: false       // last settled message was TPMS (next FAULT counts once)
+        property bool canAsciiInFault: false          // inside a TPMS-fault context (its FAULTs repeat)
+        property bool canAsciiHushed: false           // TPMS fault latched off for the session
+        readonly property int canAsciiSuppressAfter: 5  // hush after this many TPMS->FAULT occurrences (0 = never)
+        onPendingChanged: canAsciiSettle.restart()    // debounce: ignore sub-120 ms blips
+        visible: text.length > 0
+        text: ""
+        x: 28; y: 451
+        width: 580; elide: Text.ElideRight
+        color: "#ffcf6b"                              // amber ECU message
+        font.family: root.menuFont; font.bold: true; font.pixelSize: 16
+        Timer {
+            id: canAsciiSettle
+            interval: 120; repeat: false
+            onTriggered: {
+                var c = canAsciiText.pending;
+                if (!c) {
+                    canAsciiClearTimer.restart();             // empty -> arm blank
+                } else {
+                    var show = c;
+                    if (c === "TPMS") {
+                        if (canAsciiText.canAsciiSuppressAfter > 0
+                            && canAsciiText.canAsciiPairs >= canAsciiText.canAsciiSuppressAfter)
+                            canAsciiText.canAsciiHushed = true;          // enough occurrences -> latch off
+                        canAsciiText.canAsciiAwaitFault = true;          // a FAULT may follow
+                        canAsciiText.canAsciiInFault = true;             // entering the TPMS-fault context
+                        if (canAsciiText.canAsciiHushed) show = "";
+                    } else if (c === "FAULT") {
+                        if (canAsciiText.canAsciiAwaitFault) {           // first FAULT after a TPMS = one occurrence
+                            canAsciiText.canAsciiAwaitFault = false;
+                            if (!canAsciiText.canAsciiHushed) canAsciiText.canAsciiPairs += 1;
+                        }
+                        if (canAsciiText.canAsciiHushed && canAsciiText.canAsciiInFault) show = "";   // hush repeating TPMS-fault FAULT
+                        // a FAULT outside a TPMS-fault context keeps showing
+                    } else {
+                        canAsciiText.canAsciiAwaitFault = false;
+                        canAsciiText.canAsciiInFault = false;            // other text ends the TPMS-fault context
+                    }
+                    canAsciiText.text = show;
+                    canAsciiClearTimer.stop();
+                }
+            }
+        }
+        Timer {
+            id: canAsciiClearTimer
+            interval: 3000; repeat: false
+            onTriggered: { canAsciiText.text = ""; canAsciiText.canAsciiAwaitFault = false; canAsciiText.canAsciiInFault = false; }   // quiet ends the context
+        }
+    }
+
     Rectangle {   // RACE MODE button
         x: 636; y: 414; width: 72; height: 32; radius: 5
         color: root.tRace ? "#2a1414" : "#161b28"
@@ -907,6 +1035,10 @@ Item {
     // First run: if no config is found, write the current defaults so the file
     // exists (FileIO does not create it on a read).
     Component.onCompleted: {
+        // Tell the host firmware that warnings are handled locally, so it does
+        // NOT draw its own warning-light bar over the dash. Hardware-only flag
+        // (the property is absent in the desktop sim), so the write is guarded.
+        if (root.d) { try { root.d.DISABLE_WARNING_OVERLAY = "YES_WARNINGS_HANDLED_LOCALLY"; } catch (e) {} }
         if (!loadConfig())
             saveConfig();
         fuelDisplay = fuel;   // start the damped bar at the live level (no boot sweep)
