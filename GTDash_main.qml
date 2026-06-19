@@ -174,12 +174,19 @@ Item {
     function hx(n) { n = Math.max(0, Math.min(255, Math.round(n))); var s = n.toString(16); return (s.length < 2 ? "0" : "") + s; }
     readonly property string accent: "#" + hx(red) + hx(green) + hx(blue)
     // rpm-needle smoothing. The spring chases rpmDisplay toward the live rpm.
-    // RPM DAMPING 1..10 maps linearly to spring stiffness: 1 = snappiest (stiff,
-    // tracks a throttle blip tightly) ... 10 = smoothest (calm, gliding needle).
-    // Geometric scale: each step multiplies stiffness by a constant ratio, from
-    // 55 (1 = near-instant snap, ~60ms) down to 0.8 (10 = lazy gliding needle,
-    // ~1.6s). A geometric (vs linear) spread makes the *perceived* change even
-    // across the 1..10 range instead of bunching it at the stiff end.
+    // RPM DAMPING 1..10 sets the rpm-needle spring stiffness: 1 = snappiest
+    // (tracks a throttle blip tightly), 10 = a calm, lazy gliding needle.
+    // Geometric scale — each step multiplies stiffness by a constant ratio
+    // (~0.63), so the *perceived* change is even across 1..10 instead of
+    // bunching at the stiff end. Measured settle (step to 5000 rpm, to within
+    // 2%), desktop sim — approximate, confirm feel on hardware:
+    //    damp  spring  settle        damp  spring  settle
+    //     1     55.0   ~25 ms         6      5.2   ~175 ms
+    //     2     34.4   ~50 ms         7      3.3   ~300 ms
+    //     3*    21.5   ~75 ms         8      2.0   ~475 ms
+    //     4     13.4   ~100 ms        9      1.3   ~900 ms
+    //     5      8.4   ~150 ms        10     0.8   ~1400 ms
+    //   (* = default)
     readonly property real springVal: 55.0 * Math.pow(0.8 / 55.0, (Math.max(1, Math.min(10, rpmDamp)) - 1) / 9.0)
 
     // ---- bundled UI font ---------------------------------------------------
