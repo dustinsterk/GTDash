@@ -217,6 +217,8 @@ Item {
     property bool  selfTest: true
     property real  sweepRpm: 0
     readonly property real rpmShown: selfTest ? sweepRpm : rpmDisplay
+    // 0..1 sweep progress; drives every bar in sync during the power-on self-test
+    readonly property real sweepFrac: Math.max(0, Math.min(1, sweepRpm / Math.max(1, rpmmax)))
     SequentialAnimation {
         id: bootSweep; running: false
         NumberAnimation { target: root; property: "sweepRpm"; from: 0; to: root.rpmmax; duration: 850; easing.type: Easing.OutCubic }
@@ -237,6 +239,8 @@ Item {
     Behavior on fuelDisplay { SmoothedAnimation { velocity: root.fuelVel } }
     onFuelChanged: fuelDisplay = fuel
     readonly property real fuelLevel: (fuelDamp <= 0) ? fuel : fuelDisplay
+    // fuel bar fill fraction — follows the self-test sweep, else the live level
+    readonly property real fuelBarFrac: selfTest ? sweepFrac : fuelLevel / 100
 
     // Rev-lag debug overlay: set true to compare raw vs smoothed rpm when
     // tuning a dash's needle response. Off for normal use.
@@ -335,6 +339,7 @@ Item {
     onTempunitsChanged:     bg.requestPaint()
     onAfrSourceChanged:     bg.requestPaint()
     onHideTachNumsChanged:  bg.requestPaint()
+    onSelfTestChanged:      bg.requestPaint()
 
     // ---- STATIC layer ------------------------------------------------------
     Canvas {
@@ -359,10 +364,10 @@ Item {
             drawTachStatic(ctx);     // bezel + baseline ticks
             drawCentreStatic(ctx);   // inner disc + gear pill + divider
             drawTachNumbers(ctx);    // 1k scale labels (on top of the disc)
-            if (root.showOilTemp)  box(ctx, 12,  96, 176, 104);   // side boxes (hidden when
-            if (root.showOilPress) box(ctx, 12, 214, 176, 104);   // their unit is set to OFF)
-            if (root.showAfr)      box(ctx, 612, 96, 176, 104);
-            if (root.showCoolant)  box(ctx, 612, 214, 176, 104);
+            if (root.showOilTemp  || root.selfTest) box(ctx, 12,  96, 176, 104);   // side boxes (hidden when
+            if (root.showOilPress || root.selfTest) box(ctx, 12, 214, 176, 104);   // their unit is OFF; all
+            if (root.showAfr      || root.selfTest) box(ctx, 612, 96, 176, 104);   // shown during self-test)
+            if (root.showCoolant  || root.selfTest) box(ctx, 612, 214, 176, 104);
         }
 
         function drawTachStatic(ctx) {
@@ -586,12 +591,12 @@ Item {
             delegate: Item {
                 id: cell
                 x: modelData.bx; y: modelData.by; width: 176; height: 104
-                visible: root.gaugeShown(modelData.kind)
+                visible: root.selfTest || root.gaugeShown(modelData.kind)
                 property bool   warn:    root.gaugeWarn(modelData.kind)
                 // engine-damage criticals flash (low oil pressure / coolant overtemp)
                 property bool   critical:(modelData.kind === "oilpress" && root.oilpress  <= root.oilPressLow)
                                       || (modelData.kind === "coolant"  && root.watertemp >= root.coolantHigh)
-                property real   frac:    root.gaugeFrac(modelData.kind)
+                property real   frac:    root.selfTest ? root.sweepFrac : root.gaugeFrac(modelData.kind)
                 property string valStr:  root.gaugeVal(modelData.kind)
                 property string unitStr: root.gaugeUnit(modelData.kind)
 
@@ -619,7 +624,7 @@ Item {
                 Rectangle {   // fill (low..high), red when out of band
                     x: 16; y: 104 - 22; height: 8
                     width: cell.frac > 0 ? Math.max(6, 144 * cell.frac) : 0
-                    color: cell.warn ? "#ff3b30" : root.accent
+                    color: (!root.selfTest && cell.warn) ? "#ff3b30" : root.accent
                 }
             }
         }
@@ -628,8 +633,9 @@ Item {
         Item {
             id: bat
             property bool  warn: root.battery < root.batteryLow || root.battery > root.batteryHigh
-            property color col:  warn ? "#ff5050" : root.accent
-            property real  lvl:  Math.max(0, Math.min(1, (root.battery - root.batteryLow)
+            property color col:  (!root.selfTest && warn) ? "#ff5050" : root.accent
+            property real  lvl:  root.selfTest ? root.sweepFrac
+                                 : Math.max(0, Math.min(1, (root.battery - root.batteryLow)
                                  / Math.max(0.1, root.batteryHigh - root.batteryLow)))
             Rectangle { x: 18; y: 379; width: 30; height: 18; color: "transparent"
                         border.color: bat.col; border.width: 2 }           // body
@@ -660,8 +666,8 @@ Item {
             model: 12
             delegate: Rectangle {
                 x: 664 + index * 14; y: 379; width: 11; height: 18
-                color: (index < Math.round(root.fuelLevel / 100 * 12))
-                       ? (root.fuelLevel < root.fuelLow ? "#ff4444" : "#35d84a")
+                color: (index < Math.round(root.fuelBarFrac * 12))
+                       ? ((!root.selfTest && root.fuelLevel < root.fuelLow) ? "#ff4444" : "#35d84a")
                        : "#26314a"
             }
         }
