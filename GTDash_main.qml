@@ -951,7 +951,7 @@ Item {
     // =======================================================================
     //  SETTINGS — config file, D-pad, and the scrolling menu (single file)
     // =======================================================================
-    readonly property string cfgPath: "/opt/IC7/screen_configs/gtdash_config.txt"
+    readonly property string cfgPath: "/opt/Garw_IC7/screen_configs/gtdash_config.txt"
     FileIO {
         id: cfg
         // IC7 maps this to <dash>/screen_configs/gtdash_config.txt.
