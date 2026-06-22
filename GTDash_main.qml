@@ -13,7 +13,7 @@
 **     Up                  open the settings menu
 **     Left / Right        move between settings
 **     Up / Down           change the selected value (hold to ramp)
-**     EXIT row + Up       save to /opt/IC7/screen_configs/gtdash_config.txt & close
+**     EXIT row + Up       save to the resolved config path (see cfgCandidates) & close
 **
 **  D-pad read from rpmtest.inputsdata (udp_packetdata fallback):
 **     up 0x20  down 0x2000  left 0x20000000  right 0x40000000
@@ -586,7 +586,7 @@ Item {
         Text {
             id: rpmMetric; visible: false
             text: String(root.rpmmax)
-            font.family: root.menuFont; font.bold: true; font.pixelSize: root.placementSwap ? 52 : 70
+            font.family: root.menuFont; font.bold: true; font.pixelSize: root.placementSwap ? 52 : 62
         }
         Text {   // rpm number — fixed-width box, right-aligned so digits don't reflow.
                  // Engine off: dimmed four-dash placeholder filling the box.
@@ -594,10 +594,10 @@ Item {
             text: root.engineOff ? "\u2013\u2013\u2013\u2013" : String(Math.round(root.rpmShown / 10) * 10)
             color: root.engineOff ? "#566581"
                  : (root.overrev ? (root.blinkOn ? "#ff4040" : "#ff8a8a") : "#ffffff")
-            font.family: root.menuFont; font.bold: true; font.pixelSize: root.placementSwap ? 52 : 70
+            font.family: root.menuFont; font.bold: true; font.pixelSize: root.placementSwap ? 52 : 62
             width: rpmMetric.implicitWidth
             horizontalAlignment: Text.AlignRight
-            x: (root.placementSwap ? 382 : 384) - width / 2
+            x: (root.placementSwap ? 382 : 372) - width / 2
             y: root.placementSwap ? (290 - 49) : (218 - 65)
         }
         Text {   // "RPM" tag, just right of the number (dimmed to match the off state)
@@ -612,8 +612,8 @@ Item {
             id: spdNum
             text: root.engineOff ? "\u2013\u2013\u2013" : String(root.speedShown)
             color: root.engineOff ? "#566581" : "#ffffff"
-            font.family: root.menuFont; font.bold: true; font.pixelSize: root.placementSwap ? 70 : 52
-            x: (root.placementSwap ? 384 : 382) - width / 2
+            font.family: root.menuFont; font.bold: true; font.pixelSize: root.placementSwap ? 62 : 52
+            x: (root.placementSwap ? 372 : 382) - width / 2
             y: root.placementSwap ? (218 - 65) : (290 - 49)
         }
         Text {   // speed unit (dimmed to match the off state)
@@ -951,7 +951,15 @@ Item {
     // =======================================================================
     //  SETTINGS — config file, D-pad, and the scrolling menu (single file)
     // =======================================================================
-    readonly property string cfgPath: "/opt/Garw_IC7/screen_configs/gtdash_config.txt"
+    // Config location is resolved at startup (resolveCfgPath): some IC7 builds
+    // use /opt/Garw_IC7/..., others /opt/IC7/.... cfgPath holds the resolved path;
+    // cfgCandidates is the search order (first existing config wins; on a fresh
+    // unit the first directory that accepts a write wins).
+    property string cfgPath: "/opt/IC7/screen_configs/gtdash_config.txt"
+    readonly property var cfgCandidates: [
+        "/opt/Garw_IC7/screen_configs/gtdash_config.txt",
+        "/opt/IC7/screen_configs/gtdash_config.txt"
+    ]
     FileIO {
         id: cfg
         // IC7 maps this to <dash>/screen_configs/gtdash_config.txt.
@@ -974,6 +982,25 @@ Item {
         try { cfg.openforreading(); s = cfg.readopenfile(i); cfg.close(); }
         catch (e) { console.log("GTDash: read line " + i + " failed (" + e + ")"); }
         return s;
+    }
+    // Resolve cfgPath to the directory that exists on this unit (see cfgCandidates).
+    // Prefer a candidate that already holds a readable config; otherwise pick the
+    // first whose directory accepts a write (the write only sticks where the dir
+    // exists). Runs once at startup, before loadConfig.
+    function resolveCfgPath() {
+        var i, s;
+        for (i = 0; i < root.cfgCandidates.length; i++) {
+            root.cfgPath = root.cfgCandidates[i];
+            s = rline(0);
+            if (s !== "" && s !== undefined && s !== null) return;   // existing config here
+        }
+        for (i = 0; i < root.cfgCandidates.length; i++) {
+            root.cfgPath = root.cfgCandidates[i];
+            saveConfig();                                            // seed defaults
+            s = rline(0);
+            if (s !== "" && s !== undefined && s !== null) return;   // write stuck -> dir exists
+        }
+        root.cfgPath = root.cfgCandidates[root.cfgCandidates.length - 1];   // fallback
     }
     function loadConfig() {
         function pI(s, def) { return (s !== "" && s !== undefined && s !== null) ? parseInt(s)   : def; }
@@ -1039,6 +1066,7 @@ Item {
         // NOT draw its own warning-light bar over the dash. Hardware-only flag
         // (the property is absent in the desktop sim), so the write is guarded.
         if (root.d) { try { root.d.DISABLE_WARNING_OVERLAY = "YES_WARNINGS_HANDLED_LOCALLY"; } catch (e) {} }
+        resolveCfgPath();        // pick /opt/Garw_IC7 vs /opt/IC7 (whichever exists on this unit)
         if (!loadConfig())
             saveConfig();
         fuelDisplay = fuel;   // start the damped bar at the live level (no boot sweep)
