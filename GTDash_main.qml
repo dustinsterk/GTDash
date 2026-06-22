@@ -139,6 +139,15 @@ Item {
     // (B) word-level: drop consecutive duplicate words, then collapse an exact
     //     repeated phrase. Distinct messages ("TPMS FAULT", "Boost Control Fault
     //     Detected") have no short period and are left untouched.
+    // True if b is the same characters as a in a rotated order once spaces are
+    // removed (b is a rotation of a). Recognises a no-separator repeat that the
+    // collapse reordered ("7% Slip" vs "Slip7%", "LTC Off" vs "OffLTC") so the
+    // display can hold the version already shown instead of flipping to the garble.
+    function canAsciiSameRotation(a, b) {
+        var x = a.split(" ").join(""), y = b.split(" ").join("");
+        if (!x.length || x.length !== y.length || x === y) return false;
+        return (x + x).indexOf(y) >= 0;
+    }
     function canAsciiCollapse(out) {
         if (!out.length) return "";
         var w = out.split(/\s+/);
@@ -889,6 +898,12 @@ Item {
                         canAsciiText.canAsciiAwaitFault = false;
                         canAsciiText.canAsciiInFault = false;            // other text ends the TPMS-fault context
                     }
+                    // If the new value is just a space-stripped rotation of what is
+                    // already on screen (host re-sent a no-separator repeat that the
+                    // collapse reordered, e.g. "7% Slip" -> "Slip7%"), keep the version
+                    // already shown rather than swapping to the reordered one.
+                    if (show && canAsciiText.text && show !== canAsciiText.text
+                        && root.canAsciiSameRotation(show, canAsciiText.text)) show = canAsciiText.text;
                     canAsciiText.text = show;
                     canAsciiClearTimer.stop();
                 }
