@@ -103,6 +103,9 @@ Item {
     property var d: (typeof rpmtest !== 'undefined') ? rpmtest : null
     property real rpm:       d ? d.rpmdata          : 0
     property real speed:     d ? d.speeddata        : 0      // km/h
+    property real peakRpm:   0      // session high-water marks (PEAK card); in-memory,
+    property real peakSpeed: 0      // km/h canonical -> reset on power cycle
+    onSpeedChanged: if (speed > peakSpeed) peakSpeed = speed
     property int  gearpos:   d ? d.geardata         : 0
     property real watertemp: d ? d.watertempdata    : 0      // °C
     property real fuel:      d ? d.fueldata         : 0      // 0..100 %
@@ -132,13 +135,6 @@ Item {
         }
         return root.canAsciiCollapse(out.trim());
     }
-    // Collapse a host buffer that does not self-clear and piles a message up.
-    // (A) char-level: handles a *misaligned* window of a repeated unit such as
-    //     "LT FAULT FAU" — find the smallest whole-string period; if the text is
-    //     >= 2 periods, take one period rotated to a word boundary -> "FAULT".
-    // (B) word-level: drop consecutive duplicate words, then collapse an exact
-    //     repeated phrase. Distinct messages ("TPMS FAULT", "Boost Control Fault
-    //     Detected") have no short period and are left untouched.
     // True if b is the same characters as a in a rotated order once spaces are
     // removed (b is a rotation of a). Recognises a no-separator repeat that the
     // collapse reordered ("7% Slip" vs "Slip7%", "LTC Off" vs "OffLTC") so the
@@ -160,6 +156,13 @@ Item {
         if (!s) return 0;                                   // blank
         return (s.indexOf("FAULT") >= 0 || s === "TPMS") ? 2 : 1;   // 2 = fault-class, 1 = info
     }
+    // Collapse a host buffer that does not self-clear and piles a message up.
+    // Word-level only: drop word-fragments left by a window that opened or closed
+    // mid-word, drop consecutive duplicate words, then collapse an exact repeated
+    // phrase to one copy. Distinct messages ("TPMS FAULT", "Boost Control Fault
+    // Detected") have no such repeat and pass through untouched.
+    // NOTE: a char-level "smallest period" collapse was tried and removed -- it
+    // mangled FAULT. Do NOT reintroduce it.
     function canAsciiCollapse(out) {
         if (!out.length) return "";
         var w = out.split(/\s+/);
@@ -223,10 +226,10 @@ Item {
     property int  fuelDamp:      3
     property real oilTempHigh:   130   // °C (canonical)
     property real oilTempLow:    80    // °C (canonical)
-    property int  oilTempUnits:  0     // 0 = °C, 1 = °F
+    property int  oilTempUnits:  0     // 0 = °C, 1 = °F, 2 = OFF (blank), 3 = PEAK card
     property real oilPressHigh:  90    // PSI (canonical)
     property real oilPressLow:   15    // PSI (canonical)
-    property int  oilPressUnits: 1     // 0 = PSI, 1 = BAR  (sensor is native BAR)
+    property int  oilPressUnits: 1     // 0 = PSI, 1 = BAR, 2 = OFF  (sensor native BAR)
     property real batteryHigh:   14.8
     property real batteryLow:    11.8
     property real afrHigh:       1.02   // O2 limits stored in LAMBDA (1.02 = 15.0 AFR)
@@ -240,10 +243,11 @@ Item {
     // Each unit/source setting has an OFF state (the highest value) that hides
     // that side gauge entirely — both its panel box (static layer) and its live
     // content (dynamic layer): oil-temp/oil-press/coolant OFF=2, AFR OFF=3.
-    readonly property bool showOilTemp:  oilTempUnits  !== 2
+    readonly property bool showOilTemp:  oilTempUnits  <= 1                 // °C/°F only; OFF(2) blank
     readonly property bool showOilPress: oilPressUnits !== 2
     readonly property bool showCoolant:  tempunits     !== 2
     readonly property bool showAfr:      afrSource     !== 2
+    readonly property bool showPeak:     oilTempUnits  === 3                // PEAK card takes the oil-temp slot
 
     // --- display ---
     property int  nightlight: 0        // 0..100 night dimmer (0 = off)
@@ -298,7 +302,7 @@ Item {
     // damping 0.55 settles fast with little overshoot (was 0.30 = bouncy/slow).
     readonly property real springDamp: 0.30 + springVal * 0.025   // paired to the stiffness: clean settle, ~no bounce across the range
     Behavior on rpmDisplay { SpringAnimation { spring: root.springVal; damping: root.springDamp; epsilon: 1 } }
-    onRpmChanged: rpmDisplay = rpm
+    onRpmChanged: { rpmDisplay = rpm; if (rpm > peakRpm) peakRpm = rpm; }
 
     // ---- power-on self-test sweep ------------------------------------------
     //  On boot, sweep the tach 0 -> max -> 0 while every telltale and shift
@@ -460,8 +464,8 @@ Item {
             drawTachStatic(ctx);     // bezel + baseline ticks
             drawCentreStatic(ctx);   // inner disc + gear pill + divider
             drawTachNumbers(ctx);    // 1k scale labels (on top of the disc)
-            if (root.showOilTemp  || root.selfTest) box(ctx, 12,  96, 176, 104);   // side boxes (hidden when
-            if (root.showOilPress || root.selfTest) box(ctx, 12, 214, 176, 104);   // their unit is OFF; all
+            if (root.showOilPress || root.selfTest) box(ctx, 12,  96, 176, 104);   // side boxes (hidden when
+            if (root.showOilTemp  || root.showPeak || root.selfTest) box(ctx, 12, 214, 176, 104);   // their unit is OFF; all
             if (root.showAfr      || root.selfTest) box(ctx, 612, 96, 176, 104);   // shown during self-test)
             if (root.showCoolant  || root.selfTest) box(ctx, 612, 214, 176, 104);
         }
@@ -679,8 +683,8 @@ Item {
         // ===== four side mini-gauges (box chrome is on bg) =====
         Repeater {
             model: [
-                { kind: "oiltemp",  bx: 12,  by: 96  },
-                { kind: "oilpress", bx: 12,  by: 214 },
+                { kind: "oiltemp",  bx: 12,  by: 214 },
+                { kind: "oilpress", bx: 12,  by: 96  },
                 { kind: "afr",      bx: 612, by: 96  },
                 { kind: "coolant",  bx: 612, by: 214 }
             ]
@@ -722,6 +726,47 @@ Item {
                     width: cell.frac > 0 ? Math.max(6, 144 * cell.frac) : 0
                     color: (!root.selfTest && cell.warn) ? "#ff3b30" : root.accent
                 }
+            }
+        }
+
+        // ===== PEAK card (fills the oil-press slot when OIL PRESS UNIT = PEAK) =====
+        // Box chrome is on bg (drawn when showPeak); this draws only the text. The
+        // hero line (big) and secondary line (small) keep fixed positions; RPM/SPEED
+        // SWAP just picks which metric sits on each, mirroring the centre readout.
+        Item {
+            id: peakCard
+            x: 12; y: 214; width: 176; height: 104
+            visible: root.showPeak && !root.selfTest    // during self-test the slot runs the gauge sweep; PEAK takes over after
+            readonly property string rpmStr:  String(Math.round(root.peakRpm))
+            readonly property string spdStr:  root.speedunits === 0 ? String(Math.round(root.peakSpeed))
+                                                                    : String(Math.round(root.peakSpeed / 1.609))
+            readonly property string spdUnit: root.speedunits === 0 ? "KM/H" : "MPH"
+            Text {                                   // label (matches the gauge-box labels)
+                text: "PEAK"; color: root.accent
+                font.family: root.menuFont; font.bold: true; font.pixelSize: 14
+                x: 16; y: 26 - 13
+            }
+            Text {                                   // hero line (big): rpm normally, speed when swapped
+                id: pkHero
+                text: root.placementSwap ? peakCard.spdStr : peakCard.rpmStr
+                color: "#ffffff"; font.family: root.menuFont; font.bold: true; font.pixelSize: 30
+                x: 16; y: 58 - 30
+            }
+            Text {
+                text: root.placementSwap ? peakCard.spdUnit : "RPM"; color: "#9fb2d0"
+                font.family: root.menuFont; font.bold: true; font.pixelSize: 14
+                x: pkHero.x + pkHero.width + 8; y: 58 - 14
+            }
+            Text {                                   // secondary line (small): speed normally, rpm when swapped
+                id: pkSec
+                text: root.placementSwap ? peakCard.rpmStr : peakCard.spdStr
+                color: "#ffffff"; font.family: root.menuFont; font.bold: true; font.pixelSize: 22
+                x: 16; y: 90 - 22
+            }
+            Text {
+                text: root.placementSwap ? "RPM" : peakCard.spdUnit; color: "#9fb2d0"
+                font.family: root.menuFont; font.bold: true; font.pixelSize: 13
+                x: pkSec.x + pkSec.width + 8; y: 90 - 13
             }
         }
 
@@ -917,17 +962,15 @@ Item {
                     // already shown rather than swapping to the reordered one.
                     if (show && canAsciiText.text && show !== canAsciiText.text
                         && root.canAsciiSameRotation(show, canAsciiText.text)) show = canAsciiText.text;
-                    // Min on-screen dwell + severity hold (one gate). A fresh
-                    // message that is NOT higher severity than the one showing
-                    // waits until that message has had its dwell, so a fast ECU
-                    // rotation stays readable. A fault (sev 2) interrupts info at
-                    // once, and a fault always swaps another fault immediately --
-                    // so the TPMS/FAULT path is unchanged. canAsciiDwell fires at
-                    // dwell-end and re-runs this settle on the latest pending.
-                    var ns = root.canAsciiSeverity(show);
-                    var cs = root.canAsciiSeverity(canAsciiText.text);
+                    // Min on-screen dwell + severity hold (one gate). A fault-class
+                    // message (sev 2) interrupts at once -- whether it replaces info
+                    // or another fault -- so the TPMS/FAULT path is unchanged. Anything
+                    // else (info) waits until the showing message has had its dwell, so
+                    // a fast ECU rotation stays readable. Severity is only info=1 /
+                    // fault=2 here, so "interrupt" reduces to "candidate is a fault".
+                    // canAsciiDwell fires at dwell-end and re-runs this settle.
                     if (show && canAsciiText.text && show !== canAsciiText.text
-                        && !(ns > cs || (ns === 2 && cs === 2)) && canAsciiDwell.running)
+                        && root.canAsciiSeverity(show) !== 2 && canAsciiDwell.running)
                         return;                              // hold current message through its dwell
                     canAsciiClearTimer.stop();
                     if (show !== canAsciiText.text) {
@@ -1202,7 +1245,7 @@ Item {
         case "fdmp":   root.fuelDamp     = clamp(root.fuelDamp + dir, 0, 9);   break;
         case "othi":   root.oilTempHigh  = clamp(root.oilTempHigh + dir * (root.oilTempUnits === 1 ? 5/9 : 1), 0, 250); break;
         case "otlo":   root.oilTempLow   = clamp(root.oilTempLow  + dir * (root.oilTempUnits === 1 ? 5/9 : 1), 0, 250); break;
-        case "otun":   root.oilTempUnits = ((root.oilTempUnits + dir) % 3 + 3) % 3; break;
+        case "otun":   root.oilTempUnits = ((root.oilTempUnits + dir) % 4 + 4) % 4; break;
         case "ophi":   root.oilPressHigh = clamp(root.oilPressHigh + dir * (root.oilPressUnits === 1 ? 1.45038 : 1), 0, 200); break;
         case "oplo":   root.oilPressLow  = clamp(root.oilPressLow  + dir * (root.oilPressUnits === 1 ? 1.45038 : 1), 0, 200); break;
         case "opun":   root.oilPressUnits= ((root.oilPressUnits + dir) % 3 + 3) % 3; break;
@@ -1239,7 +1282,7 @@ Item {
         case "fdmp":   return String(root.fuelDamp);
         case "othi":   return (root.oilTempUnits === 1 ? Math.round(root.oilTempHigh * 9/5 + 32) : Math.round(root.oilTempHigh)) + "\u00B0";
         case "otlo":   return (root.oilTempUnits === 1 ? Math.round(root.oilTempLow  * 9/5 + 32) : Math.round(root.oilTempLow))  + "\u00B0";
-        case "otun":   return root.oilTempUnits === 0 ? "\u00B0C" : root.oilTempUnits === 1 ? "\u00B0F" : "OFF";
+        case "otun":   return root.oilTempUnits === 0 ? "\u00B0C" : root.oilTempUnits === 1 ? "\u00B0F" : root.oilTempUnits === 2 ? "OFF" : "PEAK";
         case "ophi":   return root.oilPressUnits === 1 ? (root.oilPressHigh / 14.5038).toFixed(1) : String(Math.round(root.oilPressHigh));
         case "oplo":   return root.oilPressUnits === 1 ? (root.oilPressLow  / 14.5038).toFixed(1) : String(Math.round(root.oilPressLow));
         case "opun":   return root.oilPressUnits === 0 ? "PSI" : root.oilPressUnits === 1 ? "BAR" : "OFF";
