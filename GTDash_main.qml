@@ -144,9 +144,21 @@ Item {
     // collapse reordered ("7% Slip" vs "Slip7%", "LTC Off" vs "OffLTC") so the
     // display can hold the version already shown instead of flipping to the garble.
     function canAsciiSameRotation(a, b) {
+        // a = fresh candidate, b = the text already on screen. Only treat a as
+        // a garbled rotation of b when a has NO separator but b DOES -- i.e. a
+        // is the space-stripped, reordered repeat ("Slip7%" of "7% Slip"). Two
+        // distinct single words that happen to be rotations (STOP/POST) both
+        // lack spaces and so are left alone (hardened residual-risk guard).
+        if (a.indexOf(" ") >= 0 || b.indexOf(" ") < 0) return false;
         var x = a.split(" ").join(""), y = b.split(" ").join("");
         if (!x.length || x.length !== y.length || x === y) return false;
         return (x + x).indexOf(y) >= 0;
+    }
+    // Message severity: faults outrank info. Drives BOTH the min-dwell and the
+    // severity-hold gate in canAsciiSettle (one notion, no separate priority).
+    function canAsciiSeverity(s) {
+        if (!s) return 0;                                   // blank
+        return (s.indexOf("FAULT") >= 0 || s === "TPMS") ? 2 : 1;   // 2 = fault-class, 1 = info
     }
     function canAsciiCollapse(out) {
         if (!out.length) return "";
@@ -864,6 +876,7 @@ Item {
         property bool canAsciiInFault: false          // inside a TPMS-fault context (its FAULTs repeat)
         property bool canAsciiHushed: false           // TPMS fault latched off for the session
         readonly property int canAsciiSuppressAfter: 5  // hush after this many TPMS->FAULT occurrences (0 = never)
+        readonly property int canAsciiDwellMs: 900      // min ms a committed message holds before a non-higher-severity one may replace it
         onPendingChanged: canAsciiSettle.restart()    // debounce: ignore sub-120 ms blips
         visible: text.length > 0
         text: ""
@@ -904,8 +917,23 @@ Item {
                     // already shown rather than swapping to the reordered one.
                     if (show && canAsciiText.text && show !== canAsciiText.text
                         && root.canAsciiSameRotation(show, canAsciiText.text)) show = canAsciiText.text;
-                    canAsciiText.text = show;
+                    // Min on-screen dwell + severity hold (one gate). A fresh
+                    // message that is NOT higher severity than the one showing
+                    // waits until that message has had its dwell, so a fast ECU
+                    // rotation stays readable. A fault (sev 2) interrupts info at
+                    // once, and a fault always swaps another fault immediately --
+                    // so the TPMS/FAULT path is unchanged. canAsciiDwell fires at
+                    // dwell-end and re-runs this settle on the latest pending.
+                    var ns = root.canAsciiSeverity(show);
+                    var cs = root.canAsciiSeverity(canAsciiText.text);
+                    if (show && canAsciiText.text && show !== canAsciiText.text
+                        && !(ns > cs || (ns === 2 && cs === 2)) && canAsciiDwell.running)
+                        return;                              // hold current message through its dwell
                     canAsciiClearTimer.stop();
+                    if (show !== canAsciiText.text) {
+                        canAsciiText.text = show;
+                        if (show) canAsciiDwell.restart(); else canAsciiDwell.stop();
+                    }
                 }
             }
         }
@@ -913,6 +941,11 @@ Item {
             id: canAsciiClearTimer
             interval: 3000; repeat: false
             onTriggered: { canAsciiText.text = ""; canAsciiText.canAsciiAwaitFault = false; canAsciiText.canAsciiInFault = false; }   // quiet ends the context
+        }
+        Timer {                                          // minimum on-screen dwell for a committed message
+            id: canAsciiDwell
+            interval: canAsciiText.canAsciiDwellMs; repeat: false
+            onTriggered: canAsciiSettle.restart()        // re-evaluate the latest pending now the dwell elapsed
         }
     }
 
