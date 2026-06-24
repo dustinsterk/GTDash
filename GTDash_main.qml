@@ -226,7 +226,7 @@ Item {
     property int  fuelDamp:      3
     property real oilTempHigh:   130   // °C (canonical)
     property real oilTempLow:    80    // °C (canonical)
-    property int  oilTempUnits:  0     // 0 = °C, 1 = °F, 2 = OFF (blank), 3 = PEAK card
+    property int  oilTempUnits:  0     // 0 = °C, 1 = °F, 2 = OFF (blank)
     property real oilPressHigh:  90    // PSI (canonical)
     property real oilPressLow:   15    // PSI (canonical)
     property int  oilPressUnits: 1     // 0 = PSI, 1 = BAR, 2 = OFF  (sensor native BAR)
@@ -247,7 +247,20 @@ Item {
     readonly property bool showOilPress: oilPressUnits !== 2
     readonly property bool showCoolant:  tempunits     !== 2
     readonly property bool showAfr:      afrSource     !== 2
-    readonly property bool showPeak:     oilTempUnits  === 3                // PEAK card takes the oil-temp slot
+    readonly property bool showPeak:     showPeakGauge                       // PEAK card occupies a chosen corner slot
+    property bool showPeakGauge:     false  // SHOW PEAK GAUGE menu toggle (default off)
+    property int  peakGaugePosition: 1      // PEAK POSITION: 1=top-left 2=top-right 3=bottom-left 4=bottom-right
+    // peak-card corner coordinates + which corner gauge the card displaces
+    readonly property real peakX: (peakGaugePosition === 2 || peakGaugePosition === 4) ? 612 : 12
+    readonly property real peakY: (peakGaugePosition === 1 || peakGaugePosition === 2) ? 96  : 214
+    readonly property bool peakAtOilPress: showPeak && peakGaugePosition === 1
+    readonly property bool peakAtAfr:      showPeak && peakGaugePosition === 2
+    readonly property bool peakAtOilTemp:  showPeak && peakGaugePosition === 3
+    readonly property bool peakAtCoolant:  showPeak && peakGaugePosition === 4
+    function peakOccupies(k) {
+        return (k === "oilpress" && peakAtOilPress) || (k === "afr"     && peakAtAfr)
+            || (k === "oiltemp"  && peakAtOilTemp)  || (k === "coolant" && peakAtCoolant);
+    }
 
     // --- display ---
     property int  nightlight: 0        // 0..100 night dimmer (0 = off)
@@ -440,6 +453,8 @@ Item {
     onAfrSourceChanged:     bg.requestPaint()
     onHideTachNumsChanged:  bg.requestPaint()
     onSelfTestChanged:      bg.requestPaint()
+    onShowPeakGaugeChanged:     bg.requestPaint()
+    onPeakGaugePositionChanged: bg.requestPaint()
 
     // ---- STATIC layer ------------------------------------------------------
     Canvas {
@@ -464,10 +479,10 @@ Item {
             drawTachStatic(ctx);     // bezel + baseline ticks
             drawCentreStatic(ctx);   // inner disc + gear pill + divider
             drawTachNumbers(ctx);    // 1k scale labels (on top of the disc)
-            if (root.showOilPress || root.selfTest) box(ctx, 12,  96, 176, 104);   // side boxes (hidden when
-            if (root.showOilTemp  || root.showPeak || root.selfTest) box(ctx, 12, 214, 176, 104);   // their unit is OFF; all
-            if (root.showAfr      || root.selfTest) box(ctx, 612, 96, 176, 104);   // shown during self-test)
-            if (root.showCoolant  || root.selfTest) box(ctx, 612, 214, 176, 104);
+            if (root.showOilPress || root.peakAtOilPress || root.selfTest) box(ctx, 12,  96, 176, 104);   // side boxes (hidden when
+            if (root.showOilTemp  || root.peakAtOilTemp  || root.selfTest) box(ctx, 12, 214, 176, 104);   // their unit is OFF); a slot
+            if (root.showAfr      || root.peakAtAfr      || root.selfTest) box(ctx, 612, 96, 176, 104);   // also keeps its box when the
+            if (root.showCoolant  || root.peakAtCoolant  || root.selfTest) box(ctx, 612, 214, 176, 104);  // PEAK card occupies it
         }
 
         function drawTachStatic(ctx) {
@@ -691,7 +706,7 @@ Item {
             delegate: Item {
                 id: cell
                 x: modelData.bx; y: modelData.by; width: 176; height: 104
-                visible: root.selfTest || root.gaugeShown(modelData.kind)
+                visible: root.selfTest || (root.gaugeShown(modelData.kind) && !root.peakOccupies(modelData.kind))
                 property bool   warn:    root.gaugeWarn(modelData.kind)
                 // engine-damage criticals flash (low oil pressure / coolant overtemp)
                 property bool   critical:(modelData.kind === "oilpress" && !root.engineOff && root.oilPressShown <= root.oilPressLow)
@@ -735,7 +750,7 @@ Item {
         // SWAP just picks which metric sits on each, mirroring the centre readout.
         Item {
             id: peakCard
-            x: 12; y: 214; width: 176; height: 104
+            x: root.peakX; y: root.peakY; width: 176; height: 104
             visible: root.showPeak && !root.selfTest    // during self-test the slot runs the gauge sweep; PEAK takes over after
             readonly property string rpmStr:  String(Math.round(root.peakRpm))
             readonly property string spdStr:  root.speedunits === 0 ? String(Math.round(root.peakSpeed))
@@ -1128,6 +1143,8 @@ Item {
         root.placementSwap= pI(rline(26),  root.placementSwap ? 1 : 0) !== 0;
         root.hideTachNums = pI(rline(27),  root.hideTachNums ? 1 : 0) !== 0;
         root.hideShiftLights = pI(rline(28), root.hideShiftLights ? 1 : 0) !== 0;
+        root.showPeakGauge   = pI(rline(29), root.showPeakGauge ? 1 : 0) !== 0;
+        root.peakGaugePosition = pI(rline(30), root.peakGaugePosition);
         return found;
     }
     function saveConfig() {
@@ -1140,7 +1157,8 @@ Item {
                         root.batteryHigh.toFixed(1), root.batteryLow.toFixed(1),
                         root.afrHigh.toFixed(2), root.afrLow.toFixed(2), root.nightlight,
                         root.afrSource, (root.placementSwap ? 1 : 0), (root.hideTachNums ? 1 : 0),
-                        (root.hideShiftLights ? 1 : 0)];
+                        (root.hideShiftLights ? 1 : 0),
+                        (root.showPeakGauge ? 1 : 0), root.peakGaugePosition];
             // Write the whole file in a SINGLE writetoopenfile() call (verified
             // to round-trip with the per-line reader above).
             var out = "";
@@ -1215,12 +1233,14 @@ Item {
         { k: "asrc",   label: "AFR SOURCE" },
         { k: "night",  label: "NIGHTLIGHT" },
         { k: "swap",   label: "RPM/SPEED SWAP" },
+        { k: "pkon",   label: "SHOW PEAK GAUGE" },
+        { k: "pkpos",  label: "PEAK POSITION" },
         { k: "htn",    label: "HIDE TACH NUMS" },
         { k: "hsl",    label: "HIDE SHIFT LIGHTS" },
         { k: "exit",   label: "EXIT" }
     ]
     // toggles + exit aren't hold-to-ramp; everything else is.
-    readonly property var noRamp: ["speed", "dist", "cun", "otun", "opun", "asrc", "swap", "htn", "hsl", "exit"]
+    readonly property var noRamp: ["speed", "dist", "cun", "otun", "opun", "asrc", "swap", "pkon", "pkpos", "htn", "hsl", "exit"]
     function isRampable(k) { return noRamp.indexOf(k) === -1; }
 
     function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
@@ -1245,7 +1265,9 @@ Item {
         case "fdmp":   root.fuelDamp     = clamp(root.fuelDamp + dir, 0, 9);   break;
         case "othi":   root.oilTempHigh  = clamp(root.oilTempHigh + dir * (root.oilTempUnits === 1 ? 5/9 : 1), 0, 250); break;
         case "otlo":   root.oilTempLow   = clamp(root.oilTempLow  + dir * (root.oilTempUnits === 1 ? 5/9 : 1), 0, 250); break;
-        case "otun":   root.oilTempUnits = ((root.oilTempUnits + dir) % 4 + 4) % 4; break;
+        case "otun":   root.oilTempUnits = ((root.oilTempUnits + dir) % 3 + 3) % 3; break;
+        case "pkon":   root.showPeakGauge = !root.showPeakGauge; break;
+        case "pkpos":  root.peakGaugePosition = ((root.peakGaugePosition - 1 + dir) % 4 + 4) % 4 + 1; break;
         case "ophi":   root.oilPressHigh = clamp(root.oilPressHigh + dir * (root.oilPressUnits === 1 ? 1.45038 : 1), 0, 200); break;
         case "oplo":   root.oilPressLow  = clamp(root.oilPressLow  + dir * (root.oilPressUnits === 1 ? 1.45038 : 1), 0, 200); break;
         case "opun":   root.oilPressUnits= ((root.oilPressUnits + dir) % 3 + 3) % 3; break;
@@ -1282,7 +1304,9 @@ Item {
         case "fdmp":   return String(root.fuelDamp);
         case "othi":   return (root.oilTempUnits === 1 ? Math.round(root.oilTempHigh * 9/5 + 32) : Math.round(root.oilTempHigh)) + "\u00B0";
         case "otlo":   return (root.oilTempUnits === 1 ? Math.round(root.oilTempLow  * 9/5 + 32) : Math.round(root.oilTempLow))  + "\u00B0";
-        case "otun":   return root.oilTempUnits === 0 ? "\u00B0C" : root.oilTempUnits === 1 ? "\u00B0F" : root.oilTempUnits === 2 ? "OFF" : "PEAK";
+        case "otun":   return root.oilTempUnits === 0 ? "\u00B0C" : root.oilTempUnits === 1 ? "\u00B0F" : "OFF";
+        case "pkon":   return root.showPeakGauge ? "TRUE" : "FALSE";
+        case "pkpos":  return root.peakGaugePosition === 1 ? "1 TL" : root.peakGaugePosition === 2 ? "2 TR" : root.peakGaugePosition === 3 ? "3 BL" : "4 BR";
         case "ophi":   return root.oilPressUnits === 1 ? (root.oilPressHigh / 14.5038).toFixed(1) : String(Math.round(root.oilPressHigh));
         case "oplo":   return root.oilPressUnits === 1 ? (root.oilPressLow  / 14.5038).toFixed(1) : String(Math.round(root.oilPressLow));
         case "opun":   return root.oilPressUnits === 0 ? "PSI" : root.oilPressUnits === 1 ? "BAR" : "OFF";
