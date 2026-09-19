@@ -199,6 +199,7 @@ Item {
     onOilpressChanged: oilPressShown = oilpress
     property real afr:       d ? (d.o2data * 14.7)  : 0      // native lambda -> AFR (canonical, x14.7)
     property real battery:   d ? d.batteryvoltagedata : 0    // volts
+    property real batteryShown: 0   // debounced volts actually shown (see battery throttle timer)
 
     // =======================================================================
     //  SETTABLE CONFIG  (the menu writes these directly; persisted to disk)
@@ -309,6 +310,15 @@ Item {
     property bool tSport:    inputs & 0x1000000
     property bool tLeft:     inputs & 0x40
     property bool tRight:    inputs & 0x80
+    // The raw turn bits above track the car's flasher relay (i.e. the actual bulb).
+    // Mirror that state directly so the dash telltale lights and darkens in sync
+    // with the bulb. It's refreshed each 50 ms by the input poll below (the same
+    // path the D-pad uses, robust on backends that don't emit change signals). No
+    // dash-side blink timer is applied here, so there is only one blinker (the
+    // relay) -- that both keeps them in phase and avoids the earlier beat that
+    // dropped blinks.
+    property bool tLeftActive:  false
+    property bool tRightActive: false
 
     // ---- spring-damped rpm + animation clock ------------------------------
     property real rpmDisplay: 0
@@ -487,14 +497,14 @@ Item {
 
         function drawTachStatic(ctx) {
             var bandOut = gaugeR - 6, bandIn = gaugeR - 46;
-            ctx.lineWidth = 6; ctx.strokeStyle = "#1a1f2b";
+            ctx.lineWidth = 7; ctx.strokeStyle = "#7486aa";   // outer ring — brightened for sun
             ctx.beginPath(); ctx.arc(cx, cy, gaugeR + 4, 0, Math.PI * 2); ctx.stroke();
             // baseline (unlit) ticks every 100 rpm
             for (var v = 0; v <= root.rpmmax; v += 100) {
                 var a = ang(v), major = (v % 1000 === 0), redZone = (v >= root.rpmredline);
                 var ro = bandOut, ri = major ? bandIn - 4 : bandIn + 10;
-                ctx.strokeStyle = redZone ? "#4a1c1c" : "#2a3550";
-                ctx.lineWidth = major ? 4 : 2;
+                ctx.strokeStyle = redZone ? "#cc6666" : "#94a8cc";   // baseline ticks — brightened for sun
+                ctx.lineWidth = major ? 4 : 3;
                 ctx.beginPath();
                 ctx.moveTo(cx + ri * Math.cos(a), cy + ri * Math.sin(a));
                 ctx.lineTo(cx + ro * Math.cos(a), cy + ro * Math.sin(a));
@@ -519,15 +529,15 @@ Item {
             ctx.beginPath(); ctx.arc(cx, cy, gaugeR - 52, 0, Math.PI * 2); ctx.fill();
             // gear pill background
             rr(ctx, cx - 44, cy - 96, 88, 46, 10); ctx.fillStyle = "#11182a"; ctx.fill();
-            rr(ctx, cx - 44, cy - 96, 88, 46, 10); ctx.strokeStyle = "#2a3550"; ctx.lineWidth = 2; ctx.stroke();
+            rr(ctx, cx - 44, cy - 96, 88, 46, 10); ctx.strokeStyle = "#8ea3c7"; ctx.lineWidth = 2; ctx.stroke();
             // divider under the rpm readout
-            ctx.strokeStyle = "#1c2740"; ctx.lineWidth = 2;
+            ctx.strokeStyle = "#5f7093"; ctx.lineWidth = 2;
             ctx.beginPath(); ctx.moveTo(cx - 96, cy + 22); ctx.lineTo(cx + 96, cy + 22); ctx.stroke();
         }
 
         function box(ctx, x, y, w, h) {
             rr(ctx, x, y, w, h, 12); ctx.fillStyle = "rgba(10,16,28,0.72)"; ctx.fill();
-            rr(ctx, x, y, w, h, 12); ctx.strokeStyle = "rgba(120,150,200,0.28)"; ctx.lineWidth = 2; ctx.stroke();
+            rr(ctx, x, y, w, h, 12); ctx.strokeStyle = "rgba(155,185,230,0.55)"; ctx.lineWidth = 2; ctx.stroke();
         }
         // rounded-rect path using quadraticCurveTo (arcTo is unreliable on the
         // IC7's Qt 5.12 paint engine; radius is clamped so tiny rects stay valid)
@@ -788,9 +798,9 @@ Item {
         // ===== battery readout (bottom bar, left) =====
         Item {
             id: bat
-            property bool  warn: root.battery < root.batteryLow || root.battery > root.batteryHigh
+            property bool  warn: root.batteryShown < root.batteryLow || root.batteryShown > root.batteryHigh
             property color col:  (!root.selfTest && warn) ? "#ff5050" : root.accent
-            readonly property real realLvl: Math.max(0, Math.min(1, (root.battery - root.batteryLow)
+            readonly property real realLvl: Math.max(0, Math.min(1, (root.batteryShown - root.batteryLow)
                                  / Math.max(0.1, root.batteryHigh - root.batteryLow)))
             property real  lvl:  root.selfTest ? (root.sweepFrac * (1 - root.settle) + realLvl * root.settle) : realLvl
             Rectangle { x: 18; y: 379; width: 30; height: 18; color: "transparent"
@@ -799,7 +809,7 @@ Item {
             Rectangle { x: 20; y: 381; width: 26 * bat.lvl; height: 14; color: bat.col }  // level
             Text {   // "13.8V" (italic, canvas middle-baseline at 62,387)
                 id: vText
-                text: root.battery.toFixed(1) + "V"
+                text: root.batteryShown.toFixed(1) + "V"
                 color: bat.warn ? "#ff7777" : "#ffffff"
                 font.family: root.menuFont; font.bold: true; font.italic: true; font.pixelSize: 28
                 x: 62; y: 387 - height / 2 - 3
@@ -848,6 +858,17 @@ Item {
     property bool blinkOn: true
     Timer { interval: 420; repeat: true; running: true
             onTriggered: root.blinkOn = !root.blinkOn }
+    // Battery readout debounce: raw volts jitter ~0.02 V and flip the shown tenth
+    // (14.1<->14.2) every frame, reading as flicker. Only move the displayed value
+    // once the live reading has drifted clearly past it (0.08 V deadband), sampled
+    // a few times a second.
+    Timer {
+        interval: 400; repeat: true; running: true
+        onTriggered: {
+            if (root.batteryShown === 0 || Math.abs(root.battery - root.batteryShown) >= 0.08)
+                root.batteryShown = root.battery;
+        }
+    }
 
     Image {   // fuel pump icon: white (fuel.png) normally, red warning
               // (fuel_level_warning.png) once the level drops below FUEL LOW
@@ -1037,13 +1058,13 @@ Item {
         source: "assets/left_indicator.png"
         x: 36; y: 18; height: 50; fillMode: Image.PreserveAspectFit
         smooth: true
-        visible: root.tLeft && root.blinkOn
+        visible: root.tLeftActive
     }
     Image {   // blinking right indicator
         source: "assets/right_indicator.png"
         x: 718; y: 18; height: 50; fillMode: Image.PreserveAspectFit
         smooth: true
-        visible: root.tRight && root.blinkOn
+        visible: root.tRightActive
     }
 
     // ---- NIGHTLIGHT dimmer (above the dash, below the menu) ----------------
@@ -1340,6 +1361,9 @@ Item {
             if (dn && !pDown){ applyValue(-1); downHold = 0; }
         }
         pUp = u; pDown = dn; pLeft = l; pRight = r;
+        // mirror the flasher/bulb state (poll-driven; works without change signals)
+        root.tLeftActive  = ((root.inputs & 0x40) !== 0);
+        root.tRightActive = ((root.inputs & 0x80) !== 0);
     }
     Connections {
         target: root.d
