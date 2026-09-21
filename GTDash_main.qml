@@ -105,7 +105,24 @@ Item {
     property real speed:     d ? d.speeddata        : 0      // km/h
     property real peakRpm:   0      // session high-water marks (PEAK card); in-memory,
     property real peakSpeed: 0      // km/h canonical -> reset on power cycle
-    onSpeedChanged: if (speed > peakSpeed) peakSpeed = speed
+    property real peakOilTemp:     -1e9   // session max, C canonical
+    property real peakCoolant:     -1e9   // session max, C canonical
+    property real peakOilPressMax: -1e9   // session max, PSI canonical
+    property real peakOilPressMin:  1e9   // session min, PSI canonical (low oil press = danger)
+    property real peakAfrMax:      -1e9   // session max, AFR canonical (leanest)
+    property real peakAfrMin:       1e9   // session min, AFR canonical (richest)
+    onSpeedChanged:     if (speed     > peakSpeed)   peakSpeed   = speed
+    onOiltempChanged:   if (oiltemp   > peakOilTemp) peakOilTemp = oiltemp
+    onWatertempChanged: if (watertemp > peakCoolant) peakCoolant = watertemp
+    onAfrChanged:       { if (afr > peakAfrMax) peakAfrMax = afr;
+                          if (afr < peakAfrMin) peakAfrMin = afr; }
+    function resetPeaks() {
+        peakRpm = 0; peakSpeed = 0;
+        peakOilTemp = -1e9; peakCoolant = -1e9;
+        peakOilPressMax = -1e9; peakOilPressMin = 1e9;
+        peakAfrMax = -1e9; peakAfrMin = 1e9;
+        settingsRev += 1;
+    }
     property int  gearpos:   d ? d.geardata         : 0
     property real watertemp: d ? d.watertempdata    : 0      // °C
     property real fuel:      d ? d.fueldata         : 0      // 0..100 %
@@ -196,7 +213,9 @@ Item {
     // pressure on start (and eases down on shut-off) instead of snapping.
     property real oilPressShown: 0
     Behavior on oilPressShown { SmoothedAnimation { velocity: 60 } }   // ~PSI/sec
-    onOilpressChanged: oilPressShown = oilpress
+    onOilpressChanged: { oilPressShown = oilpress;
+                         if (oilpress > peakOilPressMax) peakOilPressMax = oilpress;
+                         if (oilpress < peakOilPressMin) peakOilPressMin = oilpress; }
     property real afr:       d ? (d.o2data * 14.7)  : 0      // native lambda -> AFR (canonical, x14.7)
     property real battery:   d ? d.batteryvoltagedata : 0    // volts
     property real batteryShown: 0   // debounced volts actually shown (see battery throttle timer)
@@ -251,6 +270,52 @@ Item {
     readonly property bool showPeak:     showPeakGauge                       // PEAK card occupies a chosen corner slot
     property bool showPeakGauge:     false  // SHOW PEAK GAUGE menu toggle (default off)
     property int  peakGaugePosition: 1      // PEAK POSITION: 1=top-left 2=top-right 3=bottom-left 4=bottom-right
+    // which metrics the PEAK card lists (default RPM+SPEED = original behaviour)
+    property bool peakShowRpm:      true
+    property bool peakShowSpeed:    true
+    property bool peakShowAfr:      false
+    property bool peakShowOilTemp:  false
+    property bool peakShowOilPress: false
+    property bool peakShowCoolant:  false
+    // {label,text} per enabled metric, converted to the user's units at read time
+    readonly property var peakRows: {
+        var a = [];
+        var rpmRow = { label: "RPM", text: String(Math.round(peakRpm)) };
+        var spdRow = { label: "SPEED", text: (speedunits === 0 ? String(Math.round(peakSpeed)) + " KM/H"
+                                                             : String(Math.round(peakSpeed / 1.609)) + " MPH") };
+        if (placementSwap) { if (peakShowSpeed) a.push(spdRow); if (peakShowRpm) a.push(rpmRow); }
+        else               { if (peakShowRpm) a.push(rpmRow); if (peakShowSpeed) a.push(spdRow); }
+        if (peakShowAfr)      a.push({ label: (afrSource === 1 ? "\u03BB" : "AFR"),
+                                       text: peakFmtAfr(peakAfrMin) + "\u2013" + peakFmtAfr(peakAfrMax) });
+        if (peakShowOilTemp)  a.push({ label: "OIL T", text: peakFmtTemp(peakOilTemp, oilTempUnits) });
+        if (peakShowOilPress) a.push({ label: "OIL P", text: peakFmtPressRange(peakOilPressMin, peakOilPressMax) });
+        if (peakShowCoolant)  a.push({ label: "COOL",  text: peakFmtTemp(peakCoolant, tempunits) });
+        return a;
+    }
+    readonly property int peakRowH: Math.max(9, Math.min(24, Math.floor((74 - (Math.max(1, peakRows.length) - 1)) / Math.max(1, peakRows.length))))
+    readonly property int peakMaxVal: { var m = 1; for (var i = 0; i < peakRows.length; i++) m = Math.max(m, peakRows[i].text.length);  return m; }
+    readonly property int peakMaxLab: { var m = 1; for (var j = 0; j < peakRows.length; j++) m = Math.max(m, peakRows[j].label.length); return m; }
+    // ONE uniform font for the whole card: the largest that fits the row height
+    // and the longest label/value, so every row matches (no per-cell shrink)
+    readonly property int peakFont: Math.max(9, Math.min(20, peakRowH - 2,
+                                     Math.floor(84 / (peakMaxVal * 0.60)),
+                                     Math.floor(58 / (peakMaxLab * 0.60))))
+    // vertically centre the list in the space under the PEAK header
+    readonly property int peakColY: Math.round(28 + Math.max(0,
+                                     (74 - (peakRows.length * peakRowH + Math.max(0, peakRows.length - 1))) / 2))
+    function peakFmtTemp(c, units) {
+        if (c <= -1e8) return "--";
+        return String(Math.round(units === 1 ? c * 9/5 + 32 : c)) + (units === 1 ? "\u00B0F" : "\u00B0C");
+    }
+    function peakFmtPressRange(lo, hi) {
+        if (hi <= -1e8) return "--";
+        if (oilPressUnits === 0) return String(Math.round(lo)) + "\u2013" + String(Math.round(hi)) + " PSI";
+        return (lo / 14.5038).toFixed(1) + "\u2013" + (hi / 14.5038).toFixed(1) + " BAR";
+    }
+    function peakFmtAfr(a) {
+        if (a <= -1e8 || a >= 1e8) return "--";
+        return afrSource === 1 ? (a / 14.7).toFixed(2) : a.toFixed(1);
+    }
     // peak-card corner coordinates + which corner gauge the card displaces
     readonly property real peakX: (peakGaugePosition === 2 || peakGaugePosition === 4) ? 612 : 12
     readonly property real peakY: (peakGaugePosition === 1 || peakGaugePosition === 2) ? 96  : 214
@@ -761,37 +826,33 @@ Item {
         Item {
             id: peakCard
             x: root.peakX; y: root.peakY; width: 176; height: 104
-            visible: root.showPeak && !root.selfTest    // during self-test the slot runs the gauge sweep; PEAK takes over after
-            readonly property string rpmStr:  String(Math.round(root.peakRpm))
-            readonly property string spdStr:  root.speedunits === 0 ? String(Math.round(root.peakSpeed))
-                                                                    : String(Math.round(root.peakSpeed / 1.609))
-            readonly property string spdUnit: root.speedunits === 0 ? "KM/H" : "MPH"
+            visible: root.showPeak && !root.selfTest    // self-test runs the gauge sweep in this slot; PEAK takes over after
             Text {                                   // label (matches the gauge-box labels)
                 text: "PEAK"; color: root.accent
                 font.family: root.menuFont; font.bold: true; font.pixelSize: 14
-                x: 16; y: 26 - 13
+                x: 16; y: 13
             }
-            Text {                                   // hero line (big): rpm normally, speed when swapped
-                id: pkHero
-                text: root.placementSwap ? peakCard.spdStr : peakCard.rpmStr
-                color: "#ffffff"; font.family: root.menuFont; font.bold: true; font.pixelSize: 30
-                x: 16; y: 58 - 30
-            }
-            Text {
-                text: root.placementSwap ? peakCard.spdUnit : "RPM"; color: "#9fb2d0"
-                font.family: root.menuFont; font.bold: true; font.pixelSize: 14
-                x: pkHero.x + pkHero.width + 8; y: 58 - 14
-            }
-            Text {                                   // secondary line (small): speed normally, rpm when swapped
-                id: pkSec
-                text: root.placementSwap ? peakCard.rpmStr : peakCard.spdStr
-                color: "#ffffff"; font.family: root.menuFont; font.bold: true; font.pixelSize: 22
-                x: 16; y: 90 - 22
-            }
-            Text {
-                text: root.placementSwap ? "RPM" : peakCard.spdUnit; color: "#9fb2d0"
-                font.family: root.menuFont; font.bold: true; font.pixelSize: 13
-                x: pkSec.x + pkSec.width + 8; y: 90 - 13
+            Column {                                 // one row per enabled peak metric; font auto-scales to fit
+                x: 16; y: root.peakColY; width: 148; spacing: 1
+                Repeater {
+                    model: root.peakRows
+                    delegate: Item {
+                        width: 148; height: root.peakRowH
+                        Text {
+                            text: modelData.label; color: "#9fb2d0"
+                            font.family: root.menuFont; font.bold: true; font.pixelSize: root.peakFont
+                            anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
+                            width: 60; fontSizeMode: Text.HorizontalFit; minimumPixelSize: 8
+                        }
+                        Text {
+                            text: modelData.text; color: "#ffffff"
+                            font.family: root.menuFont; font.bold: true; font.pixelSize: root.peakFont
+                            anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                            horizontalAlignment: Text.AlignRight; width: 84
+                            fontSizeMode: Text.HorizontalFit; minimumPixelSize: 9
+                        }
+                    }
+                }
             }
         }
 
@@ -1166,6 +1227,12 @@ Item {
         root.hideShiftLights = pI(rline(28), root.hideShiftLights ? 1 : 0) !== 0;
         root.showPeakGauge   = pI(rline(29), root.showPeakGauge ? 1 : 0) !== 0;
         root.peakGaugePosition = pI(rline(30), root.peakGaugePosition);
+        root.peakShowRpm      = pI(rline(31), root.peakShowRpm      ? 1 : 0) !== 0;
+        root.peakShowSpeed    = pI(rline(32), root.peakShowSpeed    ? 1 : 0) !== 0;
+        root.peakShowAfr      = pI(rline(33), root.peakShowAfr      ? 1 : 0) !== 0;
+        root.peakShowOilTemp  = pI(rline(34), root.peakShowOilTemp  ? 1 : 0) !== 0;
+        root.peakShowOilPress = pI(rline(35), root.peakShowOilPress ? 1 : 0) !== 0;
+        root.peakShowCoolant  = pI(rline(36), root.peakShowCoolant  ? 1 : 0) !== 0;
         return found;
     }
     function saveConfig() {
@@ -1179,7 +1246,10 @@ Item {
                         root.afrHigh.toFixed(2), root.afrLow.toFixed(2), root.nightlight,
                         root.afrSource, (root.placementSwap ? 1 : 0), (root.hideTachNums ? 1 : 0),
                         (root.hideShiftLights ? 1 : 0),
-                        (root.showPeakGauge ? 1 : 0), root.peakGaugePosition];
+                        (root.showPeakGauge ? 1 : 0), root.peakGaugePosition,
+                        (root.peakShowRpm ? 1 : 0), (root.peakShowSpeed ? 1 : 0),
+                        (root.peakShowAfr ? 1 : 0), (root.peakShowOilTemp ? 1 : 0),
+                        (root.peakShowOilPress ? 1 : 0), (root.peakShowCoolant ? 1 : 0)];
             // Write the whole file in a SINGLE writetoopenfile() call (verified
             // to round-trip with the per-line reader above).
             var out = "";
@@ -1226,7 +1296,7 @@ Item {
     property bool downArmed: false
 
     // every navigable row: {k: key, label: shown text}. Order = on-screen order.
-    readonly property var items: [
+    readonly property var itemsAll: [
         { k: "shift",  label: "SHIFT RPM" },
         { k: "limit",  label: "RPM LIMIT" },
         { k: "rdamp",  label: "RPM DAMPING" },
@@ -1256,12 +1326,25 @@ Item {
         { k: "swap",   label: "RPM/SPEED SWAP" },
         { k: "pkon",   label: "SHOW PEAK GAUGE" },
         { k: "pkpos",  label: "PEAK POSITION" },
+        { k: "pkrpm",  label: "PEAK: RPM" },
+        { k: "pkspd",  label: "PEAK: SPEED" },
+        { k: "pkafr",  label: "PEAK: AFR" },
+        { k: "pkotm",  label: "PEAK: OIL TEMP" },
+        { k: "pkopr",  label: "PEAK: OIL PRESS" },
+        { k: "pkcol",  label: "PEAK: COOLANT" },
+        { k: "pkrst",  label: "RESET PEAKS" },
         { k: "htn",    label: "HIDE TACH NUMS" },
         { k: "hsl",    label: "HIDE SHIFT LIGHTS" },
         { k: "exit",   label: "EXIT" }
     ]
+    // the PEAK: * picker rows appear only while SHOW PEAK GAUGE is on
+    readonly property var peakItemKeys: ["pkrpm","pkspd","pkafr","pkotm","pkopr","pkcol","pkrst"]
+    readonly property var items: itemsAll
+    // a PEAK: * picker row is collapsed and skipped while SHOW PEAK GAUGE is off,
+    // without changing the model identity (which would reset the selector to top)
+    function rowHidden(k) { return !showPeakGauge && peakItemKeys.indexOf(k) !== -1; }
     // toggles + exit aren't hold-to-ramp; everything else is.
-    readonly property var noRamp: ["speed", "dist", "cun", "otun", "opun", "asrc", "swap", "pkon", "pkpos", "htn", "hsl", "exit"]
+    readonly property var noRamp: ["speed", "dist", "cun", "otun", "opun", "asrc", "swap", "pkon", "pkpos", "pkrpm", "pkspd", "pkafr", "pkotm", "pkopr", "pkcol", "pkrst", "htn", "hsl", "exit"]
     function isRampable(k) { return noRamp.indexOf(k) === -1; }
 
     function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
@@ -1289,6 +1372,13 @@ Item {
         case "otun":   root.oilTempUnits = ((root.oilTempUnits + dir) % 3 + 3) % 3; break;
         case "pkon":   root.showPeakGauge = !root.showPeakGauge; break;
         case "pkpos":  root.peakGaugePosition = ((root.peakGaugePosition - 1 + dir) % 4 + 4) % 4 + 1; break;
+        case "pkrpm":  root.peakShowRpm      = !root.peakShowRpm;      break;
+        case "pkspd":  root.peakShowSpeed    = !root.peakShowSpeed;    break;
+        case "pkafr":  root.peakShowAfr      = !root.peakShowAfr;      break;
+        case "pkotm":  root.peakShowOilTemp  = !root.peakShowOilTemp;  break;
+        case "pkopr":  root.peakShowOilPress = !root.peakShowOilPress; break;
+        case "pkcol":  root.peakShowCoolant  = !root.peakShowCoolant;  break;
+        case "pkrst":  if (dir > 0) root.resetPeaks(); break;
         case "ophi":   root.oilPressHigh = clamp(root.oilPressHigh + dir * (root.oilPressUnits === 1 ? 1.45038 : 1), 0, 200); break;
         case "oplo":   root.oilPressLow  = clamp(root.oilPressLow  + dir * (root.oilPressUnits === 1 ? 1.45038 : 1), 0, 200); break;
         case "opun":   root.oilPressUnits= ((root.oilPressUnits + dir) % 3 + 3) % 3; break;
@@ -1328,6 +1418,13 @@ Item {
         case "otun":   return root.oilTempUnits === 0 ? "\u00B0C" : root.oilTempUnits === 1 ? "\u00B0F" : "OFF";
         case "pkon":   return root.showPeakGauge ? "TRUE" : "FALSE";
         case "pkpos":  return root.peakGaugePosition === 1 ? "1 TL" : root.peakGaugePosition === 2 ? "2 TR" : root.peakGaugePosition === 3 ? "3 BL" : "4 BR";
+        case "pkrpm":  return root.peakShowRpm      ? "TRUE" : "FALSE";
+        case "pkspd":  return root.peakShowSpeed    ? "TRUE" : "FALSE";
+        case "pkafr":  return root.peakShowAfr      ? "TRUE" : "FALSE";
+        case "pkotm":  return root.peakShowOilTemp  ? "TRUE" : "FALSE";
+        case "pkopr":  return root.peakShowOilPress ? "TRUE" : "FALSE";
+        case "pkcol":  return root.peakShowCoolant  ? "TRUE" : "FALSE";
+        case "pkrst":  return "PUSH \u25B2";
         case "ophi":   return root.oilPressUnits === 1 ? (root.oilPressHigh / 14.5038).toFixed(1) : String(Math.round(root.oilPressHigh));
         case "oplo":   return root.oilPressUnits === 1 ? (root.oilPressLow  / 14.5038).toFixed(1) : String(Math.round(root.oilPressLow));
         case "opun":   return root.oilPressUnits === 0 ? "PSI" : root.oilPressUnits === 1 ? "BAR" : "OFF";
@@ -1347,7 +1444,10 @@ Item {
 
     function openMenu()  { menuOpen = true; sel = 0; upArmed = false; downArmed = false; upHold = 0; downHold = 0; try { if (root.d) root.d.settings_on_offdata = 1; } catch (e) {} }
     function closeMenu() { menuOpen = false; try { if (root.d) root.d.settings_on_offdata = 0; } catch (e) {} }
-    function moveSel(dir){ sel = ((sel + dir) % items.length + items.length) % items.length; }
+    function moveSel(dir){
+        var n = items.length;
+        do { sel = ((sel + dir) % n + n) % n; } while (rowHidden(items[sel].k));
+    }
 
     // ---- input handling (signal-driven edge detection) ---------------------
     function evalEdges() {
@@ -1444,7 +1544,9 @@ Item {
                 preferredHighlightEnd:   6 * menu.rowH
                 delegate: Item {
                     id: row
-                    width: ListView.view.width; height: menu.rowH
+                    width: ListView.view.width
+                    height: root.rowHidden(modelData.k) ? 0 : menu.rowH
+                    visible: !root.rowHidden(modelData.k)
                     property bool current: ListView.isCurrentItem
                     Rectangle {                          // selection fill
                         visible: row.current
