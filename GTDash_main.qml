@@ -281,8 +281,8 @@ Item {
     readonly property var peakRows: {
         var a = [];
         var rpmRow = { label: "RPM", text: String(Math.round(peakRpm)) };
-        var spdRow = { label: "SPEED", text: (speedunits === 0 ? String(Math.round(peakSpeed)) + " KM/H"
-                                                             : String(Math.round(peakSpeed / 1.609)) + " MPH") };
+        var spdRow = { label: (speedunits === 0 ? "KM/H" : "MPH"),
+                       text: String(Math.round(speedunits === 0 ? peakSpeed : peakSpeed / 1.609)) };
         if (placementSwap) { if (peakShowSpeed) a.push(spdRow); if (peakShowRpm) a.push(rpmRow); }
         else               { if (peakShowRpm) a.push(rpmRow); if (peakShowSpeed) a.push(spdRow); }
         if (peakShowAfr)      a.push({ label: (afrSource === 1 ? "\u03BB" : "AFR"),
