@@ -459,6 +459,7 @@ Item {
     property bool hideTachNums: false
     // Hide the three shift lights below the tach when true (default false).
     property bool hideShiftLights: false
+    property bool showModeButtons: false   // RACE/SPORT buttons hidden unless enabled (some models lack them)
     property int  speedShown: (speedunits === 0) ? speed : Math.round(speed / 1.609)
     property string gearLabel: {
         if ((root.inputs & 0x4000000) !== 0) return "R";   // reverse bit forces "R"
@@ -581,7 +582,7 @@ Item {
         function drawTachNumbers(ctx) {
             if (root.hideTachNums) return;
             ctx.font = "bold 23px " + root.ff; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-            var rLbl = gaugeR - 58;
+            var rLbl = gaugeR - 68;
             for (var n = 0; n * 1000 <= root.rpmmax; n++) {
                 var an = ang(n * 1000);
                 ctx.fillStyle = (n * 1000 >= root.rpmredline) ? "#ff6a6a" : "#e9eefb";
@@ -694,49 +695,44 @@ Item {
             font.family: root.menuFont; font.bold: true; font.pixelSize: 38
             x: 400 - width / 2; y: 141 - height / 2 - 1   // glyph optical centre -> pill centre (y139)
         }
-        // invisible metric: reserves a fixed width for the rpm number so the
-        // readout (and the RPM tag beside it) never shifts when the digit count
-        // changes crossing 1000. DejaVu Sans has tabular digits, so any value
-        // with this many digits measures the same width.
         Text {
-            id: rpmMetric; visible: false
-            text: String(root.rpmmax)
-            font.family: root.menuFont; font.bold: true; font.pixelSize: root.placementSwap ? 52 : 62
-        }
-        Text {   // rpm number — fixed-width box, right-aligned so digits don't reflow.
-                 // Engine off: dimmed four-dash placeholder filling the box.
             id: rpmNum
             text: root.engineOff ? "\u2013\u2013\u2013\u2013" : String(Math.round(root.rpmShown / 10) * 10)
             color: root.engineOff ? "#566581"
                  : (root.overrev ? (root.blinkOn ? "#ff4040" : "#ff8a8a") : "#ffffff")
-            font.family: root.menuFont; font.bold: true; font.pixelSize: root.placementSwap ? 52 : 62
-            width: rpmMetric.implicitWidth
-            horizontalAlignment: Text.AlignRight
-            x: (root.placementSwap ? 382 : 372) - width / 2
-            y: root.placementSwap ? (290 - 49) : (218 - 65)
+            font.family: root.menuFont; font.bold: true; font.pixelSize: root.placementSwap ? 48 : 54
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: root.placementSwap ? (290 - 52) : (214 - 56)
         }
-        Text {   // "RPM" tag, just right of the number (dimmed to match the off state)
+
+        // "RPM" tag — centered directly below the RPM number
+        Text {
+            id: rpmTag
             text: "RPM"
             color: root.engineOff ? "#566581" : (root.overrev ? "#ff5555" : root.accent)
-            font.family: root.menuFont; font.bold: true; font.pixelSize: 18
-            x: rpmNum.x + rpmNum.width + 8
-            y: root.placementSwap ? 258 : (214 - 17)
+            font.family: root.menuFont; font.bold: true; font.pixelSize: 14
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: root.placementSwap ? 292 : 216
         }
-        Text {   // speed — real value when running (incl. "0" when stopped at a
-                 // light); dimmed dash placeholder only when the engine is off
+
+        // Speed number — centered horizontally in its slot
+        Text {
             id: spdNum
             text: root.engineOff ? "\u2013\u2013\u2013" : String(root.speedShown)
             color: root.engineOff ? "#566581" : "#ffffff"
-            font.family: root.menuFont; font.bold: true; font.pixelSize: root.placementSwap ? 62 : 52
-            x: (root.placementSwap ? 372 : 382) - width / 2
-            y: root.placementSwap ? (218 - 65) : (290 - 49)
+            font.family: root.menuFont; font.bold: true; font.pixelSize: root.placementSwap ? 54 : 48
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: root.placementSwap ? (214 - 56) : (290 - 52)
         }
-        Text {   // speed unit (dimmed to match the off state)
+
+        // Speed unit — centered directly below the speed number
+        Text {
+            id: spdUnit
             text: root.speedunits === 0 ? "km/h" : "mph"
             color: root.engineOff ? "#566581" : "#9fb2d0"
-            font.family: root.menuFont; font.bold: true; font.pixelSize: 18
-            x: root.placementSwap ? (spdNum.x + spdNum.width + 8) : 456
-            y: root.placementSwap ? 197 : (276 - 17)
+            font.family: root.menuFont; font.bold: true; font.pixelSize: 14
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: root.placementSwap ? 216 : 292
         }
 
         // shift lights below speed: three red rings, completely hidden until
@@ -782,6 +778,7 @@ Item {
                 id: cell
                 x: modelData.bx; y: modelData.by; width: 176; height: 104
                 visible: root.selfTest || (root.gaugeShown(modelData.kind) && !root.peakOccupies(modelData.kind))
+                property bool   isRight: modelData.bx > 400
                 property bool   warn:    root.gaugeWarn(modelData.kind)
                 // engine-damage criticals flash (low oil pressure / coolant overtemp)
                 property bool   critical:(modelData.kind === "oilpress" && !root.engineOff && root.oilPressShown <= root.oilPressLow)
@@ -794,7 +791,7 @@ Item {
                     text: root.gaugeLabel(modelData.kind)
                     color: cell.warn ? "#ff7777" : root.accent
                     font.family: root.menuFont; font.bold: true; font.pixelSize: 14
-                    x: 16; y: 26 - 13
+                    x: cell.isRight ? (parent.width - 16 - width) : 16; y: 26 - 13
                 }
                 Text {   // value (baseline +16,+64)
                     id: gVal
@@ -802,13 +799,14 @@ Item {
                     color: cell.warn ? "#ff5050" : "#ffffff"
                     opacity: (cell.critical && !root.blinkOn) ? 0.25 : 1.0   // flash when critical
                     font.family: root.menuFont; font.bold: true; font.pixelSize: 38
-                    x: 16; y: 64 - 36
+                    x: cell.isRight ? (gUnit.visible ? (gUnit.x - width - 6) : (parent.width - 16 - width)) : 16; y: 64 - 36
                 }
-                Text {   // unit, right of the value, sharing its baseline
+                Text {   // unit (right-justified on right-hand tiles)
+                    id: gUnit
                     visible: cell.unitStr !== ""
                     text: cell.unitStr; color: "#9fb2d0"
                     font.family: root.menuFont; font.bold: true; font.pixelSize: 15
-                    x: gVal.x + gVal.width + 8; y: 64 - 14
+                    x: cell.isRight ? (parent.width - 16 - width) : (gVal.x + gVal.width + 8); y: 64 - 14
                 }
                 Rectangle { x: 16; y: 104 - 22; width: 144; height: 8; color: "#1a2336" }  // track
                 Rectangle {   // fill (low..high), red when out of band
@@ -864,10 +862,10 @@ Item {
             readonly property real realLvl: Math.max(0, Math.min(1, (root.batteryShown - root.batteryLow)
                                  / Math.max(0.1, root.batteryHigh - root.batteryLow)))
             property real  lvl:  root.selfTest ? (root.sweepFrac * (1 - root.settle) + realLvl * root.settle) : realLvl
-            Rectangle { x: 18; y: 379; width: 30; height: 18; color: "transparent"
+            Rectangle { x: 18; y: 378; width: 30; height: 20; color: "transparent"
                         border.color: bat.col; border.width: 2 }           // body
             Rectangle { x: 48; y: 384; width: 3;  height: 8;  color: bat.col }   // nub
-            Rectangle { x: 20; y: 381; width: 26 * bat.lvl; height: 14; color: bat.col }  // level
+            Rectangle { x: 20; y: 380; width: 26 * bat.lvl; height: 16; color: bat.col }  // level
             Text {   // "13.8V" (italic, canvas middle-baseline at 62,387)
                 id: vText
                 text: root.batteryShown.toFixed(1) + "V"
@@ -888,11 +886,11 @@ Item {
         }
 
         // ===== fuel bar (bottom bar, right): 12 segments =====
-        Rectangle { x: 662; y: 377; width: 170; height: 22; color: "#1a2336" }   // track bg
+        Rectangle { x: 662; y: 378; width: 170; height: 20; color: "#1a2336" }   // track bg
         Repeater {
             model: 12
             delegate: Rectangle {
-                x: 664 + index * 14; y: 379; width: 11; height: 18
+                x: 664 + index * 14; y: 380; width: 11; height: 16
                 color: (index < Math.round(root.fuelBarFrac * 12))
                        ? ((!root.selfTest && root.fuelLevel < root.fuelLow) ? "#ff4444" : "#35d84a")
                        : "#26314a"
@@ -935,7 +933,7 @@ Item {
               // (fuel_level_warning.png) once the level drops below FUEL LOW
         source: root.fuelLevel < root.fuelLow ? "assets/fuel_level_warning.png"
                                               : "assets/fuel.png"
-        x: 620; y: 366 + 22 - height/2; height: 26
+        x: 620; y: 366 + 22 - height/2; height: 20
         fillMode: Image.PreserveAspectFit; smooth: true
         opacity: root.fuelLevel < root.fuelLow ? 1.0 : 0.85
     }
@@ -1091,6 +1089,7 @@ Item {
 
     Rectangle {   // RACE MODE button
         x: 636; y: 414; width: 72; height: 32; radius: 5
+        visible: root.showModeButtons
         color: root.tRace ? "#2a1414" : "#161b28"
         border.color: root.tRace ? "#ff5555" : "#2a3550"; border.width: 1
         Column {
@@ -1104,6 +1103,7 @@ Item {
 
     Rectangle {   // SPORT MODE button (inputsdata 0x1000000)
         x: 714; y: 414; width: 72; height: 32; radius: 5
+        visible: root.showModeButtons
         color: root.tSport ? "#2a2410" : "#161b28"
         border.color: root.tSport ? "#ffb02f" : "#2a3550"; border.width: 1
         Column {
@@ -1233,6 +1233,7 @@ Item {
         root.peakShowOilTemp  = pI(rline(34), root.peakShowOilTemp  ? 1 : 0) !== 0;
         root.peakShowOilPress = pI(rline(35), root.peakShowOilPress ? 1 : 0) !== 0;
         root.peakShowCoolant  = pI(rline(36), root.peakShowCoolant  ? 1 : 0) !== 0;
+        root.showModeButtons  = pI(rline(37), root.showModeButtons  ? 1 : 0) !== 0;
         return found;
     }
     function saveConfig() {
@@ -1249,7 +1250,8 @@ Item {
                         (root.showPeakGauge ? 1 : 0), root.peakGaugePosition,
                         (root.peakShowRpm ? 1 : 0), (root.peakShowSpeed ? 1 : 0),
                         (root.peakShowAfr ? 1 : 0), (root.peakShowOilTemp ? 1 : 0),
-                        (root.peakShowOilPress ? 1 : 0), (root.peakShowCoolant ? 1 : 0)];
+                        (root.peakShowOilPress ? 1 : 0), (root.peakShowCoolant ? 1 : 0),
+                        (root.showModeButtons ? 1 : 0)];
             // Write the whole file in a SINGLE writetoopenfile() call (verified
             // to round-trip with the per-line reader above).
             var out = "";
@@ -1335,6 +1337,7 @@ Item {
         { k: "pkrst",  label: "RESET PEAKS" },
         { k: "htn",    label: "HIDE TACH NUMS" },
         { k: "hsl",    label: "HIDE SHIFT LIGHTS" },
+        { k: "mbtn",   label: "MODE BUTTONS" },
         { k: "exit",   label: "EXIT" }
     ]
     // the PEAK: * picker rows appear only while SHOW PEAK GAUGE is on
@@ -1344,7 +1347,7 @@ Item {
     // without changing the model identity (which would reset the selector to top)
     function rowHidden(k) { return !showPeakGauge && peakItemKeys.indexOf(k) !== -1; }
     // toggles + exit aren't hold-to-ramp; everything else is.
-    readonly property var noRamp: ["speed", "dist", "cun", "otun", "opun", "asrc", "swap", "pkon", "pkpos", "pkrpm", "pkspd", "pkafr", "pkotm", "pkopr", "pkcol", "pkrst", "htn", "hsl", "exit"]
+    readonly property var noRamp: ["speed", "dist", "cun", "otun", "opun", "asrc", "swap", "pkon", "pkpos", "pkrpm", "pkspd", "pkafr", "pkotm", "pkopr", "pkcol", "pkrst", "htn", "hsl", "mbtn", "exit"]
     function isRampable(k) { return noRamp.indexOf(k) === -1; }
 
     function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
@@ -1391,6 +1394,7 @@ Item {
         case "swap":   root.placementSwap = !root.placementSwap; break;
         case "htn":    root.hideTachNums  = !root.hideTachNums;  break;
         case "hsl":    root.hideShiftLights = !root.hideShiftLights; break;
+        case "mbtn":   root.showModeButtons = !root.showModeButtons; break;
         case "exit":   if (dir > 0) { saveConfig(); closeMenu(); return; } break;
         }
         root.settingsRev += 1;          // triggers the ListView value cells to re-read
@@ -1437,6 +1441,7 @@ Item {
         case "swap":   return root.placementSwap ? "TRUE" : "FALSE";
         case "htn":    return root.hideTachNums  ? "TRUE" : "FALSE";
         case "hsl":    return root.hideShiftLights ? "TRUE" : "FALSE";
+        case "mbtn":   return root.showModeButtons ? "TRUE" : "FALSE";
         case "exit":   return "SAVE";
         }
         return "";
