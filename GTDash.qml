@@ -469,16 +469,16 @@ Item {
             }
         }
 
-        function drawTachNumbers(ctx) {
-            if (root.hideTachNums) return;
-            ctx.font = "bold 23px " + root.ff; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-            var rLbl = gaugeR - 58;
-            for (var n = 0; n * 1000 <= root.rpmmax; n++) {
-                var an = ang(n * 1000);
-                ctx.fillStyle = (n * 1000 >= root.rpmredline) ? "#ff6a6a" : "#e9eefb";
-                ctx.fillText(String(n), cx + rLbl * Math.cos(an), cy + rLbl * Math.sin(an));
-            }
-        }
+	function drawTachNumbers(ctx) {
+    	if (root.hideTachNums) return;
+    	ctx.font = "bold 23px " + root.ff; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    	var rLbl = gaugeR - 68;   // was gaugeR - 58 — pulls numbers ~10px further from the ticks
+    	for (var n = 0; n * 1000 <= root.rpmmax; n++) {
+        	var an = ang(n * 1000);
+        	ctx.fillStyle = (n * 1000 >= root.rpmredline) ? "#ff6a6a" : "#e9eefb";
+        	ctx.fillText(String(n), cx + rLbl * Math.cos(an), cy + rLbl * Math.sin(an));
+    	    }
+	}
 
         function drawCentreStatic(ctx) {
             ctx.fillStyle = "#0a0f1a";
