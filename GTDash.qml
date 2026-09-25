@@ -897,16 +897,17 @@ Item {
             }
         }
 
-        // ===== odo / trip (lower-right, right-aligned at x=760) =====
+        // ===== odo / trip: lower-right normally; when the mode buttons are
+        //       hidden, move up into the freed button space (right-aligned) =====
         Text {
             text: "ODO " + Math.round(root.odometer * root.distFactor) + root.distUnit
             color: "#c9d6ee"; font.family: root.menuFont; font.bold: true; font.pixelSize: 13
-            x: 760 - width; y: 457 - height / 2 - 1
+            x: 760 - width; y: (root.showModeButtons ? 457 : 424) - height / 2 - 1
         }
         Text {
             text: "TRIP " + Math.round(root.tripmeter * root.distFactor) + root.distUnit
             color: "#c9d6ee"; font.family: root.menuFont; font.bold: true; font.pixelSize: 13
-            x: 760 - width; y: 471 - height / 2 - 1
+            x: 760 - width; y: (root.showModeButtons ? 471 : 438) - height / 2 - 1
         }
     }
 
