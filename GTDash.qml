@@ -1211,16 +1211,16 @@ Item {
         // map; if none are found, fall back to the old positional format once so an
         // existing config migrates without losing settings (next save is key=value).
         var map = {}; var any = false;
-        try {
-            cfg.openforreading();
-            for (var i = 0; i < 200; i++) {
-                var ln = cfg.readopenfile(i);
-                if (ln === "" || ln === undefined || ln === null) break;
-                var eq = ln.indexOf("=");
-                if (eq > 0) { map[ln.substring(0, eq).trim()] = ln.substring(eq + 1).trim(); any = true; }
-            }
-            cfg.close();
-        } catch (e) { console.log("GTDash: read config failed (" + e + ")"); }
+        // IC7 FileIO is one-line-per-open (only the first readopenfile after each
+        // open returns its line), so read each line via rline() -- which re-opens
+        // per line -- instead of multiple reads inside one open. Reading in a single
+        // open only returns line 0 on the device, dropping every other setting.
+        for (var i = 0; i < 200; i++) {
+            var ln = rline(i);
+            if (ln === "" || ln === undefined || ln === null) break;
+            var eq = String(ln).indexOf("=");
+            if (eq > 0) { map[String(ln).substring(0, eq).trim()] = String(ln).substring(eq + 1).trim(); any = true; }
+        }
 
         if (!any) {   // old positional format (or no config at all)
             var s0 = rline(0);
