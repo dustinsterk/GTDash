@@ -98,7 +98,6 @@ import FileIO 1.0
 Item {
     id: root
     width: 800; height: 480
-    transform: Translate { y: root.vShift }   // V-SHIFT applies to the whole screen
 
     // ---- data interface (real rpmtest field names, dot-notation) ----------
     property var d: (typeof rpmtest !== 'undefined') ? rpmtest : null
@@ -534,6 +533,17 @@ Item {
     onShowPeakGaugeChanged:     bg.requestPaint()
     onPeakGaugePositionChanged: bg.requestPaint()
 
+    property bool blinkOn: true          // moved to root (was inside dashView)
+
+    // ---- live dash view (wrapped so the settings page can show a preview) --
+    Item {
+        id: dashView
+        anchors.fill: parent
+        Item {
+            id: dashShift
+            anchors.fill: parent
+            transform: Translate { y: root.vShift }   // V-SHIFT lives here so the live preview shows it too
+
     // ---- STATIC layer ------------------------------------------------------
     Canvas {
         id: bg
@@ -917,7 +927,6 @@ Item {
     // ====================================================================
     //  TELLTALES — icon set (assets/*.png), lit from inputsdata bits
     // ====================================================================
-    property bool blinkOn: true
     Timer { interval: 420; repeat: true; running: true
             onTriggered: root.blinkOn = !root.blinkOn }
     // Battery readout debounce: raw volts jitter ~0.02 V and flip the shown tenth
@@ -1130,14 +1139,16 @@ Item {
         smooth: true
         visible: root.tRightActive
     }
-
-    // ---- NIGHTLIGHT dimmer (above the dash, below the menu) ----------------
-    Rectangle {
-        anchors.fill: parent
-        color: "#000000"
-        opacity: root.nightlight / 100 * 0.7
-        visible: root.nightlight > 0
-    }
+    }   // end dashShift
+        // ---- NIGHTLIGHT dimmer: inside dashView so the live preview shows it,
+        //      but outside dashShift so V-SHIFT does not move it (full coverage)
+        Rectangle {
+            anchors.fill: parent
+            color: "#000000"
+            opacity: root.nightlight / 100 * 0.7
+            visible: root.nightlight > 0
+        }
+    }   // ---- end dashView (live-preview source) --------------------------
 
     // =======================================================================
     //  SETTINGS — config file, D-pad, and the scrolling menu (single file)
@@ -1196,73 +1207,82 @@ Item {
     function loadConfig() {
         function pI(s, def) { return (s !== "" && s !== undefined && s !== null) ? parseInt(s)   : def; }
         function pF(s, def) { return (s !== "" && s !== undefined && s !== null) ? parseFloat(s) : def; }
-        var s0 = rline(0);
-        var found = (s0 !== "" && s0 !== undefined && s0 !== null);
-        if (!found) return false;
-        root.red          = pI(s0,         root.red);
-        root.green        = pI(rline(1),   root.green);
-        root.blue         = pI(rline(2),   root.blue);
-        root.rpmredline   = pI(rline(3),   root.rpmredline);
-        root.rpmmax       = pI(rline(4),   root.rpmmax);
-        root.rpmDamp      = pI(rline(5),   root.rpmDamp);
-        root.speedunits   = pI(rline(6),   root.speedunits);
-        root.distunits    = pI(rline(7),   root.distunits);
-        root.coolantHigh  = pF(rline(8),   root.coolantHigh);
-        root.coolantLow   = pF(rline(9),   root.coolantLow);
-        root.tempunits    = pI(rline(10),  root.tempunits);
-        root.fuelHigh     = pI(rline(11),  root.fuelHigh);
-        root.fuelLow      = pI(rline(12),  root.fuelLow);
-        root.fuelDamp     = pI(rline(13),  root.fuelDamp);
-        root.oilTempHigh  = pF(rline(14),  root.oilTempHigh);
-        root.oilTempLow   = pF(rline(15),  root.oilTempLow);
-        root.oilTempUnits = pI(rline(16),  root.oilTempUnits);
-        root.oilPressHigh = pF(rline(17),  root.oilPressHigh);
-        root.oilPressLow  = pF(rline(18),  root.oilPressLow);
-        root.oilPressUnits= pI(rline(19),  root.oilPressUnits);
-        root.batteryHigh  = pF(rline(20),  root.batteryHigh);
-        root.batteryLow   = pF(rline(21),  root.batteryLow);
-        root.afrHigh      = pF(rline(22),  root.afrHigh);
-        root.afrLow       = pF(rline(23),  root.afrLow);
-        root.nightlight   = pI(rline(24),  root.nightlight);
-        root.afrSource    = pI(rline(25),  root.afrSource);
-        root.placementSwap= pI(rline(26),  root.placementSwap ? 1 : 0) !== 0;
-        root.hideTachNums = pI(rline(27),  root.hideTachNums ? 1 : 0) !== 0;
-        root.hideShiftLights = pI(rline(28), root.hideShiftLights ? 1 : 0) !== 0;
-        root.showPeakGauge   = pI(rline(29), root.showPeakGauge ? 1 : 0) !== 0;
-        root.peakGaugePosition = pI(rline(30), root.peakGaugePosition);
-        root.peakShowRpm      = pI(rline(31), root.peakShowRpm      ? 1 : 0) !== 0;
-        root.peakShowSpeed    = pI(rline(32), root.peakShowSpeed    ? 1 : 0) !== 0;
-        root.peakShowAfr      = pI(rline(33), root.peakShowAfr      ? 1 : 0) !== 0;
-        root.peakShowOilTemp  = pI(rline(34), root.peakShowOilTemp  ? 1 : 0) !== 0;
-        root.peakShowOilPress = pI(rline(35), root.peakShowOilPress ? 1 : 0) !== 0;
-        root.peakShowCoolant  = pI(rline(36), root.peakShowCoolant  ? 1 : 0) !== 0;
-        root.showModeButtons  = pI(rline(37), root.showModeButtons  ? 1 : 0) !== 0;
-        root.vShift           = pI(rline(38), root.vShift);
-        return found;
+        // Config is "key=value" lines (any order, hand-editable). Read them into a
+        // map; if none are found, fall back to the old positional format once so an
+        // existing config migrates without losing settings (next save is key=value).
+        var map = {}; var any = false;
+        try {
+            cfg.openforreading();
+            for (var i = 0; i < 200; i++) {
+                var ln = cfg.readopenfile(i);
+                if (ln === "" || ln === undefined || ln === null) break;
+                var eq = ln.indexOf("=");
+                if (eq > 0) { map[ln.substring(0, eq).trim()] = ln.substring(eq + 1).trim(); any = true; }
+            }
+            cfg.close();
+        } catch (e) { console.log("GTDash: read config failed (" + e + ")"); }
+
+        if (!any) {   // old positional format (or no config at all)
+            var s0 = rline(0);
+            if (s0 === "" || s0 === undefined || s0 === null || isNaN(parseFloat(s0))) return false;
+            root.red=pI(rline(0),root.red); root.green=pI(rline(1),root.green); root.blue=pI(rline(2),root.blue);
+            root.rpmredline=pI(rline(3),root.rpmredline); root.rpmmax=pI(rline(4),root.rpmmax); root.rpmDamp=pI(rline(5),root.rpmDamp);
+            root.speedunits=pI(rline(6),root.speedunits); root.distunits=pI(rline(7),root.distunits);
+            root.coolantHigh=pF(rline(8),root.coolantHigh); root.coolantLow=pF(rline(9),root.coolantLow); root.tempunits=pI(rline(10),root.tempunits);
+            root.fuelHigh=pI(rline(11),root.fuelHigh); root.fuelLow=pI(rline(12),root.fuelLow); root.fuelDamp=pI(rline(13),root.fuelDamp);
+            root.oilTempHigh=pF(rline(14),root.oilTempHigh); root.oilTempLow=pF(rline(15),root.oilTempLow); root.oilTempUnits=pI(rline(16),root.oilTempUnits);
+            root.oilPressHigh=pF(rline(17),root.oilPressHigh); root.oilPressLow=pF(rline(18),root.oilPressLow); root.oilPressUnits=pI(rline(19),root.oilPressUnits);
+            root.batteryHigh=pF(rline(20),root.batteryHigh); root.batteryLow=pF(rline(21),root.batteryLow);
+            root.afrHigh=pF(rline(22),root.afrHigh); root.afrLow=pF(rline(23),root.afrLow); root.nightlight=pI(rline(24),root.nightlight);
+            root.afrSource=pI(rline(25),root.afrSource); root.placementSwap=pI(rline(26),root.placementSwap?1:0)!==0;
+            root.hideTachNums=pI(rline(27),root.hideTachNums?1:0)!==0; root.hideShiftLights=pI(rline(28),root.hideShiftLights?1:0)!==0;
+            root.showPeakGauge=pI(rline(29),root.showPeakGauge?1:0)!==0; root.peakGaugePosition=pI(rline(30),root.peakGaugePosition);
+            root.peakShowRpm=pI(rline(31),root.peakShowRpm?1:0)!==0; root.peakShowSpeed=pI(rline(32),root.peakShowSpeed?1:0)!==0;
+            root.peakShowAfr=pI(rline(33),root.peakShowAfr?1:0)!==0; root.peakShowOilTemp=pI(rline(34),root.peakShowOilTemp?1:0)!==0;
+            root.peakShowOilPress=pI(rline(35),root.peakShowOilPress?1:0)!==0; root.peakShowCoolant=pI(rline(36),root.peakShowCoolant?1:0)!==0;
+            root.showModeButtons=pI(rline(37),root.showModeButtons?1:0)!==0; root.vShift=pI(rline(38),root.vShift);
+            return true;
+        }
+
+        function g(k){ return map.hasOwnProperty(k) ? map[k] : ""; }
+        root.red=pI(g("red"),root.red); root.green=pI(g("green"),root.green); root.blue=pI(g("blue"),root.blue);
+        root.rpmredline=pI(g("rpmredline"),root.rpmredline); root.rpmmax=pI(g("rpmmax"),root.rpmmax); root.rpmDamp=pI(g("rpmDamp"),root.rpmDamp);
+        root.speedunits=pI(g("speedunits"),root.speedunits); root.distunits=pI(g("distunits"),root.distunits);
+        root.coolantHigh=pF(g("coolantHigh"),root.coolantHigh); root.coolantLow=pF(g("coolantLow"),root.coolantLow); root.tempunits=pI(g("tempunits"),root.tempunits);
+        root.fuelHigh=pI(g("fuelHigh"),root.fuelHigh); root.fuelLow=pI(g("fuelLow"),root.fuelLow); root.fuelDamp=pI(g("fuelDamp"),root.fuelDamp);
+        root.oilTempHigh=pF(g("oilTempHigh"),root.oilTempHigh); root.oilTempLow=pF(g("oilTempLow"),root.oilTempLow); root.oilTempUnits=pI(g("oilTempUnits"),root.oilTempUnits);
+        root.oilPressHigh=pF(g("oilPressHigh"),root.oilPressHigh); root.oilPressLow=pF(g("oilPressLow"),root.oilPressLow); root.oilPressUnits=pI(g("oilPressUnits"),root.oilPressUnits);
+        root.batteryHigh=pF(g("batteryHigh"),root.batteryHigh); root.batteryLow=pF(g("batteryLow"),root.batteryLow);
+        root.afrHigh=pF(g("afrHigh"),root.afrHigh); root.afrLow=pF(g("afrLow"),root.afrLow); root.nightlight=pI(g("nightlight"),root.nightlight);
+        root.afrSource=pI(g("afrSource"),root.afrSource); root.placementSwap=pI(g("placementSwap"),root.placementSwap?1:0)!==0;
+        root.hideTachNums=pI(g("hideTachNums"),root.hideTachNums?1:0)!==0; root.hideShiftLights=pI(g("hideShiftLights"),root.hideShiftLights?1:0)!==0;
+        root.showPeakGauge=pI(g("showPeakGauge"),root.showPeakGauge?1:0)!==0; root.peakGaugePosition=pI(g("peakGaugePosition"),root.peakGaugePosition);
+        root.peakShowRpm=pI(g("peakShowRpm"),root.peakShowRpm?1:0)!==0; root.peakShowSpeed=pI(g("peakShowSpeed"),root.peakShowSpeed?1:0)!==0;
+        root.peakShowAfr=pI(g("peakShowAfr"),root.peakShowAfr?1:0)!==0; root.peakShowOilTemp=pI(g("peakShowOilTemp"),root.peakShowOilTemp?1:0)!==0;
+        root.peakShowOilPress=pI(g("peakShowOilPress"),root.peakShowOilPress?1:0)!==0; root.peakShowCoolant=pI(g("peakShowCoolant"),root.peakShowCoolant?1:0)!==0;
+        root.showModeButtons=pI(g("showModeButtons"),root.showModeButtons?1:0)!==0; root.vShift=pI(g("vShift"),root.vShift);
+        return true;
     }
     function saveConfig() {
         try {
-            var vals = [root.red, root.green, root.blue, root.rpmredline, root.rpmmax,
-                        root.rpmDamp, root.speedunits, root.distunits, root.coolantHigh.toFixed(1),
-                        root.coolantLow.toFixed(1), root.tempunits, root.fuelHigh, root.fuelLow,
-                        root.fuelDamp, root.oilTempHigh.toFixed(1), root.oilTempLow.toFixed(1), root.oilTempUnits,
-                        root.oilPressHigh.toFixed(1), root.oilPressLow.toFixed(1), root.oilPressUnits,
-                        root.batteryHigh.toFixed(1), root.batteryLow.toFixed(1),
-                        root.afrHigh.toFixed(2), root.afrLow.toFixed(2), root.nightlight,
-                        root.afrSource, (root.placementSwap ? 1 : 0), (root.hideTachNums ? 1 : 0),
-                        (root.hideShiftLights ? 1 : 0),
-                        (root.showPeakGauge ? 1 : 0), root.peakGaugePosition,
-                        (root.peakShowRpm ? 1 : 0), (root.peakShowSpeed ? 1 : 0),
-                        (root.peakShowAfr ? 1 : 0), (root.peakShowOilTemp ? 1 : 0),
-                        (root.peakShowOilPress ? 1 : 0), (root.peakShowCoolant ? 1 : 0),
-                        (root.showModeButtons ? 1 : 0), root.vShift];
-            // Write the whole file in a SINGLE writetoopenfile() call (verified
-            // to round-trip with the per-line reader above).
-            var out = "";
-            for (var i = 0; i < vals.length; i++) out += String(vals[i]) + "\n";
-            cfg.open();
-            cfg.writetoopenfile(out);
-            cfg.close();
+            var a = [];
+            a.push("red=" + root.red); a.push("green=" + root.green); a.push("blue=" + root.blue);
+            a.push("rpmredline=" + root.rpmredline); a.push("rpmmax=" + root.rpmmax); a.push("rpmDamp=" + root.rpmDamp);
+            a.push("speedunits=" + root.speedunits); a.push("distunits=" + root.distunits);
+            a.push("coolantHigh=" + root.coolantHigh.toFixed(1)); a.push("coolantLow=" + root.coolantLow.toFixed(1)); a.push("tempunits=" + root.tempunits);
+            a.push("fuelHigh=" + root.fuelHigh); a.push("fuelLow=" + root.fuelLow); a.push("fuelDamp=" + root.fuelDamp);
+            a.push("oilTempHigh=" + root.oilTempHigh.toFixed(1)); a.push("oilTempLow=" + root.oilTempLow.toFixed(1)); a.push("oilTempUnits=" + root.oilTempUnits);
+            a.push("oilPressHigh=" + root.oilPressHigh.toFixed(1)); a.push("oilPressLow=" + root.oilPressLow.toFixed(1)); a.push("oilPressUnits=" + root.oilPressUnits);
+            a.push("batteryHigh=" + root.batteryHigh.toFixed(1)); a.push("batteryLow=" + root.batteryLow.toFixed(1));
+            a.push("afrHigh=" + root.afrHigh.toFixed(2)); a.push("afrLow=" + root.afrLow.toFixed(2)); a.push("nightlight=" + root.nightlight);
+            a.push("afrSource=" + root.afrSource); a.push("placementSwap=" + (root.placementSwap ? 1 : 0));
+            a.push("hideTachNums=" + (root.hideTachNums ? 1 : 0)); a.push("hideShiftLights=" + (root.hideShiftLights ? 1 : 0));
+            a.push("showPeakGauge=" + (root.showPeakGauge ? 1 : 0)); a.push("peakGaugePosition=" + root.peakGaugePosition);
+            a.push("peakShowRpm=" + (root.peakShowRpm ? 1 : 0)); a.push("peakShowSpeed=" + (root.peakShowSpeed ? 1 : 0));
+            a.push("peakShowAfr=" + (root.peakShowAfr ? 1 : 0)); a.push("peakShowOilTemp=" + (root.peakShowOilTemp ? 1 : 0));
+            a.push("peakShowOilPress=" + (root.peakShowOilPress ? 1 : 0)); a.push("peakShowCoolant=" + (root.peakShowCoolant ? 1 : 0));
+            a.push("showModeButtons=" + (root.showModeButtons ? 1 : 0)); a.push("vShift=" + root.vShift);
+            cfg.open(); cfg.writetoopenfile(a.join("\n") + "\n"); cfg.close();
         } catch (e) { console.log("GTDash: could not write config (" + e + ")"); }
     }
     // First run: if no config is found, write the current defaults so the file
@@ -1354,6 +1374,46 @@ Item {
     // toggles + exit aren't hold-to-ramp; everything else is.
     readonly property var noRamp: ["speed", "dist", "cun", "otun", "opun", "asrc", "swap", "pkon", "pkpos", "pkrpm", "pkspd", "pkafr", "pkotm", "pkopr", "pkcol", "pkrst", "htn", "hsl", "mbtn", "exit"]
     function isRampable(k) { return noRamp.indexOf(k) === -1; }
+    function helpText(k) {
+        switch (k) {
+        case "shift": return "RPM where the redline / shift lights begin.";
+        case "limit": return "Full-scale RPM at the top of the tach sweep.";
+        case "rdamp": return "Needle smoothing (1 = sharp \u2192 10 = smooth).";
+        case "red": case "green": case "blue": return "Accent colour (0-255) for the sweep and highlights.";
+        case "speed": return "Units for speed, odometer and trip.";
+        case "dist": return "Distance units for ODO / TRIP.";
+        case "chi": return "Coolant warns above this temperature.";
+        case "clo": return "Coolant shown cold below this temperature.";
+        case "cun": return "Coolant temperature units.";
+        case "fhi": return "Fuel sender reading for a full tank.";
+        case "flo": return "Low-fuel warning below this.";
+        case "fdmp": return "Smooths the fuel reading.";
+        case "othi": return "Oil-temperature warning above this.";
+        case "otlo": return "Oil shown cold below this temperature.";
+        case "otun": return "Oil-temperature units (or OFF).";
+        case "ophi": return "Oil-pressure warning above this.";
+        case "oplo": return "Low oil-pressure warning below this.";
+        case "opun": return "Oil-pressure units (or OFF).";
+        case "bhi": return "Battery warning above this voltage.";
+        case "blo": return "Battery warning below this voltage.";
+        case "ahi": return "AFR warning above this (lean).";
+        case "alo": return "AFR warning below this (rich).";
+        case "asrc": return "AFR readout: AFR, Lambda, or OFF.";
+        case "night": return "Night-time dimming level.";
+        case "swap": return "Swap the RPM and SPEED centre readouts.";
+        case "htn": return "Hide the small numbers around the tach.";
+        case "hsl": return "Hide the shift-light strip.";
+        case "mbtn": return "Show the RACE / SPORT mode buttons.";
+        case "pkon": return "Show the PEAK (session-high) card.";
+        case "pkpos": return "Which corner the PEAK card sits in.";
+        case "pkrpm": case "pkspd": case "pkafr": case "pkotm": case "pkopr": case "pkcol":
+            return "Include this reading on the PEAK card.";
+        case "pkrst": return "Clear the stored session peaks.";
+        case "vshift": return "Move the whole dash up / down for your seating height.";
+        case "exit": return "Save all settings and close the menu.";
+        }
+        return "";
+    }
 
     function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
@@ -1523,36 +1583,35 @@ Item {
         id: menu
         anchors.fill: parent
         visible: root.menuOpen
-        transform: Translate { y: -root.vShift }   // keep the menu fixed regardless of V-SHIFT
 
         readonly property int visibleRows: 11
         readonly property int rowH: 30
 
-        // dim the dash behind (own node so opacity doesn't fade the panel)
-        Rectangle { anchors.fill: parent; color: "#03050c"; opacity: 0.80 }
+        Rectangle { anchors.fill: parent; color: "#03050c"; opacity: 0.80 }   // dim the full-size dash behind
 
         Rectangle {
             id: panel
-            width: 540; height: 444; anchors.centerIn: parent
+            width: 772; height: 452; anchors.centerIn: parent
             radius: 16; color: "#0a0f1a"; border.color: "#1e2a44"; border.width: 2
 
             Text {
                 text: "SETTINGS"; color: "#ffffff"
                 font.pixelSize: 24; font.bold: true; font.family: root.menuFont
-                anchors.horizontalCenter: parent.horizontalCenter; y: 14
+                anchors.horizontalCenter: parent.horizontalCenter; y: 12
             }
-            Rectangle { x: 40; y: 50; width: parent.width - 80; height: 3; color: root.accent }
+            Rectangle { x: 24; y: 46; width: parent.width - 48; height: 3; color: root.accent }
 
+            // ----- LEFT: settings list -----
             ListView {
                 id: menuList
-                x: 22; y: 64
-                width: parent.width - 44; height: menu.visibleRows * menu.rowH
+                x: 22; y: 60
+                width: 356; height: menu.visibleRows * menu.rowH
                 clip: true
-                interactive: false                     // D-pad driven; no touch flick
+                interactive: false
                 model: root.items
                 currentIndex: root.sel
                 highlightMoveDuration: 0
-                highlightRangeMode: ListView.ApplyRange // keep the selection centred
+                highlightRangeMode: ListView.ApplyRange
                 preferredHighlightBegin: 5 * menu.rowH
                 preferredHighlightEnd:   6 * menu.rowH
                 delegate: Item {
@@ -1561,54 +1620,61 @@ Item {
                     height: root.rowHidden(modelData.k) ? 0 : menu.rowH
                     visible: !root.rowHidden(modelData.k)
                     property bool current: ListView.isCurrentItem
-                    Rectangle {                          // selection fill
-                        visible: row.current
-                        x: 0; y: 3; width: parent.width - 30; height: menu.rowH - 6
-                        radius: 7; color: root.accent; opacity: 0.26
-                    }
-                    Rectangle {                          // accent tab
-                        visible: row.current
-                        x: 0; y: 3; width: 4; height: menu.rowH - 6; color: root.accent
-                    }
-                    Text {                               // label
+                    Rectangle { visible: row.current; x: 0; y: 3; width: parent.width - 30; height: menu.rowH - 6; radius: 7; color: root.accent; opacity: 0.26 }
+                    Rectangle { visible: row.current; x: 0; y: 3; width: 4; height: menu.rowH - 6; color: root.accent }
+                    Text {
                         text: modelData.label
-                        x: 22; anchors.verticalCenter: parent.verticalCenter
+                        x: 20; anchors.verticalCenter: parent.verticalCenter
                         color: row.current ? "#ffffff" : "#9fb2d0"
-                        font.pixelSize: 18; font.bold: true; font.family: root.menuFont
+                        font.pixelSize: 17; font.bold: true; font.family: root.menuFont
                     }
-                    Text {                               // value (re-reads on settingsRev)
-                        anchors.right: parent.right; anchors.rightMargin: 34
+                    Text {
+                        anchors.right: parent.right; anchors.rightMargin: 30
                         anchors.verticalCenter: parent.verticalCenter
                         text: { var r = root.settingsRev; return root.valueText(modelData.k); }
                         color: row.current ? "#ffffff" : root.accent
-                        font.pixelSize: 18; font.bold: true; font.family: root.menuFont
+                        font.pixelSize: 17; font.bold: true; font.family: root.menuFont
                     }
                 }
             }
-
-            Rectangle {                                  // scrollbar (only if overflowing)
+            Rectangle {   // scrollbar
                 visible: menuList.contentHeight > menuList.height
-                x: parent.width - 26; y: 64; width: 5
-                height: menu.visibleRows * menu.rowH
+                x: 384; y: 60; width: 4; height: menu.visibleRows * menu.rowH
                 radius: 2; color: "#1c2740"
-                Rectangle {
-                    x: 0; width: 5; radius: 2; color: root.accent
+                Rectangle { x: 0; width: 4; radius: 2; color: root.accent
                     y: parent.height * menuList.visibleArea.yPosition
-                    height: Math.max(24, parent.height * menuList.visibleArea.heightRatio)
+                    height: Math.max(24, parent.height * menuList.visibleArea.heightRatio) }
+            }
+
+            // ----- RIGHT: live preview of the running dash + per-row help -----
+            Text { x: 404; y: 44; text: "LIVE PREVIEW"; color: "#7f93b6"
+                   font.pixelSize: 13; font.bold: true; font.family: root.menuFont }
+            Rectangle {
+                x: 404; y: 62; width: 344; height: 206
+                color: "#05080f"; border.color: "#1e2a44"; border.width: 1; radius: 6; clip: true
+                ShaderEffectSource {
+                    anchors.fill: parent; anchors.margins: 1
+                    sourceItem: dashView
+                    live: root.menuOpen
+                    hideSource: false
                 }
+            }
+            Text {   // per-row help
+                x: 404; y: 282; width: 344; wrapMode: Text.WordWrap
+                text: root.helpText(root.items[root.sel].k)
+                color: "#cfe0f5"; font.pixelSize: 15; font.family: root.menuFont
             }
 
             Text {
                 text: "Default units:  km \u00B7 \u00B0C \u00B7 bar \u00B7 \u03BB"
                 color: "#7f93b6"; font.pixelSize: 12; font.family: root.menuFont
-                anchors.horizontalCenter: parent.horizontalCenter
-                y: parent.height - 48
+                x: 24; y: parent.height - 46
             }
             Text {
-                text: "L / R  SELECT      U / D  CHANGE"
+                text: "L / R  SELECT      U / D  CHANGE      EXIT + U  SAVE"
                 color: "#5f6f8a"; font.pixelSize: 13; font.family: root.menuFont
                 anchors.horizontalCenter: parent.horizontalCenter
-                y: parent.height - 28
+                y: parent.height - 26
             }
         }
     }
