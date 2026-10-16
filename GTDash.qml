@@ -98,6 +98,7 @@ import FileIO 1.0
 Item {
     id: root
     width: 800; height: 480
+    transform: Translate { y: root.vShift }   // V-SHIFT applies to the whole screen
 
     // ---- data interface (real rpmtest field names, dot-notation) ----------
     property var d: (typeof rpmtest !== 'undefined') ? rpmtest : null
@@ -460,6 +461,7 @@ Item {
     // Hide the three shift lights below the tach when true (default false).
     property bool hideShiftLights: false
     property bool showModeButtons: false   // RACE/SPORT buttons hidden unless enabled (some models lack them)
+    property int  vShift: 0                 // V-SHIFT: move whole dash up/down (tall-driver aid), +/-40px
     property int  speedShown: (speedunits === 0) ? speed : Math.round(speed / 1.609)
     property string gearLabel: {
         if ((root.inputs & 0x4000000) !== 0) return "R";   // reverse bit forces "R"
@@ -1235,6 +1237,7 @@ Item {
         root.peakShowOilPress = pI(rline(35), root.peakShowOilPress ? 1 : 0) !== 0;
         root.peakShowCoolant  = pI(rline(36), root.peakShowCoolant  ? 1 : 0) !== 0;
         root.showModeButtons  = pI(rline(37), root.showModeButtons  ? 1 : 0) !== 0;
+        root.vShift           = pI(rline(38), root.vShift);
         return found;
     }
     function saveConfig() {
@@ -1252,7 +1255,7 @@ Item {
                         (root.peakShowRpm ? 1 : 0), (root.peakShowSpeed ? 1 : 0),
                         (root.peakShowAfr ? 1 : 0), (root.peakShowOilTemp ? 1 : 0),
                         (root.peakShowOilPress ? 1 : 0), (root.peakShowCoolant ? 1 : 0),
-                        (root.showModeButtons ? 1 : 0)];
+                        (root.showModeButtons ? 1 : 0), root.vShift];
             // Write the whole file in a SINGLE writetoopenfile() call (verified
             // to round-trip with the per-line reader above).
             var out = "";
@@ -1339,6 +1342,7 @@ Item {
         { k: "htn",    label: "HIDE TACH NUMS" },
         { k: "hsl",    label: "HIDE SHIFT LIGHTS" },
         { k: "mbtn",   label: "MODE BUTTONS" },
+        { k: "vshift", label: "V-SHIFT" },
         { k: "exit",   label: "EXIT" }
     ]
     // the PEAK: * picker rows appear only while SHOW PEAK GAUGE is on
@@ -1396,6 +1400,7 @@ Item {
         case "htn":    root.hideTachNums  = !root.hideTachNums;  break;
         case "hsl":    root.hideShiftLights = !root.hideShiftLights; break;
         case "mbtn":   root.showModeButtons = !root.showModeButtons; break;
+        case "vshift": root.vShift = clamp(root.vShift + dir * 2, -40, 40); break;
         case "exit":   if (dir > 0) { saveConfig(); closeMenu(); return; } break;
         }
         root.settingsRev += 1;          // triggers the ListView value cells to re-read
@@ -1443,6 +1448,7 @@ Item {
         case "htn":    return root.hideTachNums  ? "TRUE" : "FALSE";
         case "hsl":    return root.hideShiftLights ? "TRUE" : "FALSE";
         case "mbtn":   return root.showModeButtons ? "TRUE" : "FALSE";
+        case "vshift": return (root.vShift > 0 ? "+" : "") + root.vShift + " px";
         case "exit":   return "SAVE";
         }
         return "";
@@ -1517,6 +1523,7 @@ Item {
         id: menu
         anchors.fill: parent
         visible: root.menuOpen
+        transform: Translate { y: -root.vShift }   // keep the menu fixed regardless of V-SHIFT
 
         readonly property int visibleRows: 11
         readonly property int rowH: 30
