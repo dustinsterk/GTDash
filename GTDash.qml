@@ -582,7 +582,7 @@ Item {
         function drawTachNumbers(ctx) {
             if (root.hideTachNums) return;
             ctx.font = "bold 23px " + root.ff; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-            var rLbl = gaugeR - 68;
+            var rLbl = gaugeR - 58;
             for (var n = 0; n * 1000 <= root.rpmmax; n++) {
                 var an = ang(n * 1000);
                 ctx.fillStyle = (n * 1000 >= root.rpmredline) ? "#ff6a6a" : "#e9eefb";
@@ -1474,14 +1474,14 @@ Item {
     Connections {
         target: root.d
         ignoreUnknownSignals: true
-        function onInputsdataChanged()     { root.evalEdges(); }
-        function onUdp_packetdataChanged() { root.evalEdges(); }
+        onInputsdataChanged:     root.evalEdges()
+        onUdp_packetdataChanged: root.evalEdges()
     }
     // Some backends update inputsdata without emitting a change signal, so the
     // Connections above may never fire on the hardware. Poll as a fallback —
     // evalEdges() is edge-triggered (via pUp/pDown/...), so this is harmless.
     Timer {
-        interval: 50; running: true; repeat: true
+        interval: 30; running: true; repeat: true
         onTriggered: root.evalEdges()
     }
     Timer {   // hold-to-ramp for numeric rows (only runs while the menu is open)
