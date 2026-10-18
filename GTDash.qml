@@ -1540,8 +1540,8 @@ Item {
     Connections {
         target: root.d
         ignoreUnknownSignals: true
-        onInputsdataChanged:     root.evalEdges()
-        onUdp_packetdataChanged: root.evalEdges()
+        function onInputsdataChanged()     { root.evalEdges(); }
+        function onUdp_packetdataChanged() { root.evalEdges(); }
     }
     // Some backends update inputsdata without emitting a change signal, so the
     // Connections above may never fire on the hardware. Poll as a fallback —
